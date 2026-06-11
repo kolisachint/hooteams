@@ -179,6 +179,36 @@ console.log();
 
 // 5. Publish
 console.log("Publishing to npm...");
+
+// Rewrite workspace:* deps to real versions for publishing
+function rewriteWorkspaceDeps(pkgJsonPath) {
+	const content = readFileSync(pkgJsonPath, "utf-8");
+	const pkg = JSON.parse(content);
+	let changed = false;
+
+	for (const deps of [pkg.dependencies, pkg.devDependencies, pkg.peerDependencies]) {
+		if (!deps) continue;
+		for (const [name, ver] of Object.entries(deps)) {
+			if (ver === "workspace:*") {
+				// Find the real version from the workspace package
+				const parts = name.split("/");
+				const pkgName = parts[parts.length - 1];
+				const workspacePath = join(repoRoot, "packages", pkgName, "package.json");
+				if (existsSync(workspacePath)) {
+					const workspacePkg = JSON.parse(readFileSync(workspacePath, "utf-8"));
+					deps[name] = workspacePkg.version;
+					changed = true;
+				}
+			}
+		}
+	}
+
+	if (changed) {
+		writeFileSync(pkgJsonPath, JSON.stringify(pkg, null, "\t") + "\n");
+	}
+	return changed;
+}
+
 // packages/ before apps/ so dependencies land in the registry before dependents.
 for (const workspaceDir of ["packages", "apps"]) {
 	const dir = join(repoRoot, workspaceDir);
@@ -187,10 +217,14 @@ for (const workspaceDir of ["packages", "apps"]) {
 		if (!existsSync(pkgJsonPath)) continue;
 		const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
 		if (pkgJson.name && !pkgJson.private) {
+			rewriteWorkspaceDeps(pkgJsonPath);
 			run(`cd ${join(dir, pkg)} && npm publish --access public`);
 		}
 	}
 }
+
+// Restore workspace:* deps after publishing
+run("git checkout -- apps/*/package.json packages/*/package.json");
 console.log();
 
 // 6. Add new [Unreleased] sections
