@@ -20,6 +20,14 @@ bun install
 bun test
 ```
 
+### Dependencies
+
+This project uses:
+- `@kolisachint/hoocode-agent-core` v0.4.49+
+- `@kolisachint/hoocode-ai` v0.4.49+
+
+These versions include the MCP tool exports (`getDefaultTools`, `loadMcpTools`, `closeMcpTools`) required for per-role tool configuration.
+
 ### Start the team server
 
 ```bash
