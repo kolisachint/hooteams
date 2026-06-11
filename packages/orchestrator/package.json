@@ -1,0 +1,17 @@
+{
+	"name": "@kolisachint/hooteams-orchestrator",
+	"version": "0.1.0",
+	"description": "Multi-agent team orchestration on top of hoocode agents: DAG dispatch, planner, agent registry, tagged event channel",
+	"type": "module",
+	"main": "./src/index.ts",
+	"types": "./src/index.ts",
+	"scripts": {
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@kolisachint/hoocode-agent-core": "^0.4.44",
+		"@kolisachint/hoocode-ai": "^0.4.44"
+	},
+	"author": "Sachin Koli",
+	"license": "MIT"
+}

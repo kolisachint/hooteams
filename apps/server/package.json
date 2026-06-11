@@ -1,0 +1,17 @@
+{
+	"name": "@kolisachint/hooteams-server",
+	"version": "0.1.0",
+	"description": "HooTeams server: wires the orchestrator to the SSE bridge and serves it over HTTP",
+	"type": "module",
+	"main": "./src/lib.ts",
+	"types": "./src/lib.ts",
+	"scripts": {
+		"start": "bun run src/index.ts"
+	},
+	"dependencies": {
+		"@kolisachint/hooteams-bridge": "workspace:*",
+		"@kolisachint/hooteams-orchestrator": "workspace:*"
+	},
+	"author": "Sachin Koli",
+	"license": "MIT"
+}

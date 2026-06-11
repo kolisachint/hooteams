@@ -1,0 +1,15 @@
+{
+	"name": "@kolisachint/hooteams-cli",
+	"version": "0.1.0",
+	"description": "hooteams CLI: start the team server, attach a terminal to any agent, nudge it mid-run, check status",
+	"type": "module",
+	"bin": {
+		"hooteams": "./src/index.ts"
+	},
+	"dependencies": {
+		"@kolisachint/hooteams-orchestrator": "workspace:*",
+		"@kolisachint/hooteams-server": "workspace:*"
+	},
+	"author": "Sachin Koli",
+	"license": "MIT"
+}

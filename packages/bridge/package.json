@@ -1,0 +1,16 @@
+{
+	"name": "@kolisachint/hooteams-bridge",
+	"version": "0.1.0",
+	"description": "SSE bridge exposing the hooteams event channel over HTTP: fan-out streams, wire serializer, steer/status routes",
+	"type": "module",
+	"main": "./src/index.ts",
+	"types": "./src/index.ts",
+	"scripts": {
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@kolisachint/hooteams-orchestrator": "workspace:*"
+	},
+	"author": "Sachin Koli",
+	"license": "MIT"
+}
