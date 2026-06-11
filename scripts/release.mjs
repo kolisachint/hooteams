@@ -179,13 +179,18 @@ console.log();
 
 // 5. Publish
 console.log("Publishing to npm...");
-const packagesDir = join(repoRoot, "packages");
-const packages = readdirSync(packagesDir);
-for (const pkg of packages) {
-	const pkgPath = join(packagesDir, pkg);
-	const pkgJson = JSON.parse(readFileSync(join(pkgPath, "package.json"), "utf-8"));
-	if (pkgJson.name && !pkgJson.private) {
-		run(`cd ${pkgPath} && npm publish --access public`);
+// packages/ before apps/ so dependencies land in the registry before dependents.
+for (const workspaceDir of ["packages", "apps"]) {
+	const dir = join(repoRoot, workspaceDir);
+	for (const pkg of readdirSync(dir)) {
+		const pkgJsonPath = join(dir, pkg, "package.json");
+		if (!existsSync(pkgJsonPath)) continue;
+		const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
+		if (pkgJson.name && !pkgJson.private) {
+			// bun publish rewrites workspace:* deps to real versions; npm publish
+			// would upload them verbatim and break installs.
+			run(`cd ${join(dir, pkg)} && bun publish --access public`);
+		}
 	}
 }
 console.log();
