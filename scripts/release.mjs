@@ -180,6 +180,28 @@ console.log();
 // 5. Publish
 console.log("Publishing to npm...");
 
+// Build a map of workspace package name -> version across packages/ and apps/.
+// Directory names don't always match package names (e.g. packages/orchestrator
+// is @kolisachint/hooteams-orchestrator, and the server lives under apps/), so
+// we resolve by the "name" field rather than guessing the path.
+function buildWorkspaceVersions() {
+	const versions = {};
+	for (const workspaceDir of ["packages", "apps"]) {
+		const dir = join(repoRoot, workspaceDir);
+		for (const pkg of readdirSync(dir)) {
+			const pkgJsonPath = join(dir, pkg, "package.json");
+			if (!existsSync(pkgJsonPath)) continue;
+			const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
+			if (pkgJson.name && pkgJson.version) {
+				versions[pkgJson.name] = pkgJson.version;
+			}
+		}
+	}
+	return versions;
+}
+
+const workspaceVersions = buildWorkspaceVersions();
+
 // Rewrite workspace:* deps to real versions for publishing
 function rewriteWorkspaceDeps(pkgJsonPath) {
 	const content = readFileSync(pkgJsonPath, "utf-8");
@@ -190,15 +212,14 @@ function rewriteWorkspaceDeps(pkgJsonPath) {
 		if (!deps) continue;
 		for (const [name, ver] of Object.entries(deps)) {
 			if (ver === "workspace:*") {
-				// Find the real version from the workspace package
-				const parts = name.split("/");
-				const pkgName = parts[parts.length - 1];
-				const workspacePath = join(repoRoot, "packages", pkgName, "package.json");
-				if (existsSync(workspacePath)) {
-					const workspacePkg = JSON.parse(readFileSync(workspacePath, "utf-8"));
-					deps[name] = workspacePkg.version;
-					changed = true;
+				const resolved = workspaceVersions[name];
+				if (!resolved) {
+					console.error(`Error: no workspace version found for ${name}`);
+					process.exit(1);
 				}
+				deps[name] = resolved;
+				changed = true;
+				console.log(`  Rewrote ${name}: workspace:* -> ${resolved}`);
 			}
 		}
 	}
