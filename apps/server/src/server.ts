@@ -47,6 +47,9 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 
 	const server = Bun.serve({
 		port: options.port ?? config.port ?? Number(process.env.PORT ?? DEFAULT_PORT),
+		// SSE clients (/events) hold the connection open indefinitely; Bun's
+		// default 10s idleTimeout would kill them whenever the team goes quiet.
+		idleTimeout: 0,
 		fetch(request) {
 			const url = new URL(request.url);
 			if (request.method === "POST" && url.pathname === "/stop") {
