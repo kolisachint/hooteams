@@ -72,7 +72,7 @@ jobs:
 
       - name: Create GitHub Release
         run: |
-          VERSION=$(bun -e "const pkg = require('./packages/core/package.json'); console.log(pkg.version)")
+          VERSION=$(bun -e "const pkg = require('./packages/bridge/package.json'); console.log(pkg.version)")
           gh release create "v$VERSION" --title "v$VERSION" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

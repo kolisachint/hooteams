@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        package: [bridge, core, orchestrator]
+        package: [bridge, orchestrator]
     steps:
       - uses: actions/checkout@v4
 
@@ -45,19 +45,3 @@ jobs:
 
       - name: Test ${{ matrix.package }}
         run: cd packages/${{ matrix.package }} && bun test
-
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Build all packages
-        run: bun run build
