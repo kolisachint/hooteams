@@ -173,7 +173,7 @@ console.log();
 // 4. Commit and tag
 console.log("Committing and tagging...");
 stageChangedFiles();
-run(`git commit -m "Release v${version}"`);
+run(`git commit -m "chore(release): v${version}"`);
 run(`git tag v${version}`);
 console.log();
 
@@ -190,7 +190,7 @@ console.log();
 // 7. Commit
 console.log("Committing changelog updates...");
 stageChangedFiles();
-run(`git commit -m "Add [Unreleased] section for next cycle"`);
+run(`git commit -m "docs: add [Unreleased] section for next cycle"`);
 console.log();
 
 // 8. Push
