@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Conventional Commits pattern
+# Format: type(scope): description
+# Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+pattern="^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .{1,}"
+
+if ! grep -qE "$pattern" "$1"; then
+  echo "❌ Commit message does not follow Conventional Commits format"
+  echo ""
+  echo "Expected format: type(scope): description"
+  echo "Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+  echo ""
+  echo "Examples:"
+  echo "  feat: add new feature"
+  echo "  fix: resolve bug in login"
+  echo "  docs: update README"
+  echo ""
+  exit 1
+fi
