@@ -40,6 +40,31 @@ describe("validateConfig", () => {
 			),
 		).toThrow(/duplicate role "x"/);
 	});
+
+	test("fills model, provider, and thinkingLevel from defaults", () => {
+		const config = validateConfig(
+			{
+				defaults: { provider: "anthropic", model: "claude-sonnet-4-5", thinkingLevel: "low" },
+				team: [
+					{ role: "planner", systemPrompt: "plan" },
+					{ role: "coder", systemPrompt: "code", model: "claude-haiku-4-5", provider: "other", thinkingLevel: "off" },
+				],
+			},
+			"test",
+		);
+		expect(config.team[0]).toMatchObject({
+			model: "claude-sonnet-4-5",
+			provider: "anthropic",
+			thinkingLevel: "low",
+		});
+		expect(config.team[1]).toMatchObject({ model: "claude-haiku-4-5", provider: "other", thinkingLevel: "off" });
+	});
+
+	test("rejects a role without model when defaults.model is missing", () => {
+		expect(() => validateConfig({ team: [{ role: "x", systemPrompt: "s" }] }, "test")).toThrow(
+			/role "x" has no "model"/,
+		);
+	});
 });
 
 describe("startServer", () => {

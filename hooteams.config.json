@@ -1,13 +1,15 @@
 {
+	"defaults": {
+		"provider": "anthropic",
+		"model": "claude-sonnet-4-5"
+	},
 	"team": [
 		{
 			"role": "planner",
-			"model": "claude-sonnet-4-5",
 			"systemPrompt": "You are the planner. Break the user's goal into tasks and coordinate the team."
 		},
 		{
 			"role": "coder",
-			"model": "claude-sonnet-4-5",
 			"systemPrompt": "You are the coder. Implement tasks handed to you, one at a time, with tests."
 		}
 	],

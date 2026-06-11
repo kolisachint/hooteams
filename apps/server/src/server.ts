@@ -1,5 +1,5 @@
 import { createRouter, SSEBridge } from "@kolisachint/hooteams-bridge";
-import { Team, TeamChannel, type TeamOptions } from "@kolisachint/hooteams-orchestrator";
+import { createHoocodeAuth, Team, TeamChannel, type TeamOptions } from "@kolisachint/hooteams-orchestrator";
 import { DEFAULT_PORT, type ServerConfig } from "./config.js";
 
 export interface RunningServer {
@@ -20,7 +20,13 @@ export interface StartOptions {
 
 export function startServer(config: ServerConfig, options: StartOptions = {}): RunningServer {
 	const channel = new TeamChannel();
-	const team = new Team(channel, options.teamOptions);
+	// Credentials come from hoocode's store (~/.hoocode/auth.json, then env
+	// vars) unless the caller injects its own resolver (tests, embedders).
+	const teamOptions: TeamOptions = {
+		getApiKey: createHoocodeAuth(),
+		...options.teamOptions,
+	};
+	const team = new Team(channel, teamOptions);
 	const bridge = new SSEBridge(channel);
 	const router = createRouter(team, channel, bridge);
 

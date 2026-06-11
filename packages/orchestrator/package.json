@@ -10,8 +10,12 @@
 	},
 	"dependencies": {
 		"@kolisachint/hoocode-agent-core": "^0.4.44",
-		"@kolisachint/hoocode-ai": "^0.4.44"
+		"@kolisachint/hoocode-ai": "^0.4.44",
+		"proper-lockfile": "^4.1.2"
 	},
 	"author": "Sachin Koli",
-	"license": "MIT"
+	"license": "MIT",
+	"devDependencies": {
+		"@types/proper-lockfile": "^4.1.4"
+	}
 }

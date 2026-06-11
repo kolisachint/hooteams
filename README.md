@@ -143,14 +143,21 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
 
 ```jsonc
 {
+  // Team-wide fallbacks for roles that don't set their own
+  "defaults": {
+    "provider": "anthropic",                            // model provider (default: "anthropic")
+    "model": "claude-sonnet-4-5",                       // model id used by roles without one
+    "thinkingLevel": "off"                              // "off" | "low" | "medium" | "high"
+  },
+
   // Array of team members to spawn at startup
   "team": [
     {
       "role": "planner",                                // unique role name (required)
-      "model": "claude-sonnet-4-5",                     // model id for hoocode-ai (required)
+      "model": "claude-sonnet-4-5",                     // model id for hoocode-ai (required unless defaults.model is set)
       "systemPrompt": "You are the planner…",           // system prompt (required)
-      "provider": "anthropic",                          // model provider (default: "anthropic")
-      "thinkingLevel": "off",                           // "off" | "low" | "medium" | "high" (default: "off")
+      "provider": "anthropic",                          // model provider (falls back to defaults.provider, then "anthropic")
+      "thinkingLevel": "off",                           // "off" | "low" | "medium" | "high" (falls back to defaults.thinkingLevel, then "off")
       "defaultTools": true,                             // include built-in coding tools: bash/read/edit/write/grep/find/ls
       "mcpConfigPath": "./mcp.json",                    // path to mcp.json for MCP server tools (requires async spawn)
       "cwd": "/path/to/project"                         // working directory for agent tools (default: process.cwd())
@@ -177,27 +184,31 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
 | Field           | Type       | Required | Default           | Description                                                                                     |
 |-----------------|------------|----------|-------------------|-------------------------------------------------------------------------------------------------|
 | `role`          | `string`   | ✓        |                   | Unique name for this team member (e.g. `planner`, `coder`, `tester`)                            |
-| `model`         | `string`   | ✓        |                   | Model id resolved via `hoocode-ai` `getModel()` (e.g. `claude-sonnet-4-5`)                |
+| `model`         | `string`   | ✓*       |                   | Model id resolved via `hoocode-ai` `getModel()` (e.g. `claude-sonnet-4-5`). *Optional when `defaults.model` is set |
 | `systemPrompt`  | `string`   | ✓        |                   | System prompt defining the agent's responsibilities                                              |
-| `provider`      | `string`   |          | `"anthropic"`     | Model provider for `getModel()`                                                                  |
-| `thinkingLevel` | `string`   |          | `"off"`           | Extended thinking level: `off`, `low`, `medium`, `high`                                          |
+| `provider`      | `string`   |          | `"anthropic"`     | Model provider for `getModel()` (falls back to `defaults.provider` first)                        |
+| `thinkingLevel` | `string`   |          | `"off"`           | Extended thinking level: `off`, `low`, `medium`, `high` (falls back to `defaults.thinkingLevel` first) |
 | `defaultTools`  | `boolean`  |          | `false`           | Give the agent hoocode's built-in coding tools (`bash`, `read`, `edit`, `write`, `grep`, `find`, `ls`) |
 | `mcpConfigPath` | `string`   |          |                   | Path to an `mcp.json` file; MCP server tools are loaded and appended to the agent's tool set     |
 | `cwd`           | `string`   |          | `process.cwd()`   | Working directory for the agent's tools                                                          |
 
 ### Minimal config example
 
+`defaults` keeps per-role entries small — roles only override what differs:
+
 ```json
 {
+  "defaults": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5"
+  },
   "team": [
     {
       "role": "planner",
-      "model": "claude-sonnet-4-5",
       "systemPrompt": "You are the planner. Break the user's goal into tasks and coordinate the team."
     },
     {
       "role": "coder",
-      "model": "claude-sonnet-4-5",
       "systemPrompt": "You are the coder. Implement tasks handed to you, one at a time, with tests."
     }
   ],
@@ -236,9 +247,24 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
 
 ### Environment variables
 
-| Variable | Default | Description                       |
-|----------|---------|-----------------------------------|
-| `PORT`   | `4242`  | Server port (lowest priority; `--port` flag and config `port` take precedence) |
+| Variable                   | Default      | Description                       |
+|----------------------------|--------------|-----------------------------------|
+| `PORT`                     | `4242`       | Server port (lowest priority; `--port` flag and config `port` take precedence) |
+| `HOOCODE_CODING_AGENT_DIR` | `~/.hoocode` | Where to find hoocode's `auth.json` (see Authentication) |
+
+---
+
+## Authentication
+
+hooteams has no login flow of its own — it reuses hoocode's credential store. For each provider, credentials resolve in this order:
+
+1. **`~/.hoocode/auth.json` API key entry** — written by hoocode's `/login` for API-key providers.
+2. **`~/.hoocode/auth.json` OAuth entry** — e.g. an Anthropic Claude Pro/Max login. Expired tokens are refreshed automatically and written back; the file is locked with the same mechanism hoocode uses, so concurrent hoocode sessions and hooteams agents never clobber each other.
+3. **Provider environment variable** — e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
+
+To set up credentials, either run `hoocode` and `/login`, or export the provider's API key env var. No keys ever go in `hooteams.config.json` — the config only names the `provider` and `model`.
+
+Embedders can override this entirely by passing their own resolver: `startServer(config, { teamOptions: { getApiKey } })`, or build the default one with `createHoocodeAuth({ authPath })` from `@kolisachint/hooteams-orchestrator`.
 
 ---
 
