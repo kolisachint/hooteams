@@ -179,7 +179,15 @@ console.log();
 
 // 5. Publish
 console.log("Publishing to npm...");
-run("bun run --filter '*' publish --access public");
+const packagesDir = join(repoRoot, "packages");
+const packages = readdirSync(packagesDir);
+for (const pkg of packages) {
+	const pkgPath = join(packagesDir, pkg);
+	const pkgJson = JSON.parse(readFileSync(join(pkgPath, "package.json"), "utf-8"));
+	if (pkgJson.name && !pkgJson.private) {
+		run(`cd ${pkgPath} && bun publish --access public`);
+	}
+}
 console.log();
 
 // 6. Add new [Unreleased] sections
