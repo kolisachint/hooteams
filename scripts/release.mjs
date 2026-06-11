@@ -179,7 +179,7 @@ console.log();
 
 // 5. Publish
 console.log("Publishing to npm...");
-run("bun run publish");
+run("bun run --filter '*' publish --access public");
 console.log();
 
 // 6. Add new [Unreleased] sections
