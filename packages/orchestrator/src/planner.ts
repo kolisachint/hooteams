@@ -67,6 +67,8 @@ export interface PlannerOptions {
 	model?: Model<any>;
 	thinkingLevel?: ThinkingLevel;
 	streamFn?: StreamFn;
+	/** Resolves provider credentials per request, e.g. createHoocodeAuth(). */
+	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	/** Extra tools beyond spawn_agent. */
 	tools?: AgentTool<any>[];
 }
@@ -97,6 +99,7 @@ export class Planner {
 				tools: [createSpawnAgentTool(options.team), ...(options.tools ?? [])],
 			},
 			streamFn: options.streamFn,
+			getApiKey: options.getApiKey,
 		});
 		options.team.channel.attach(PLANNER_ROLE, randomUUID(), this.agent);
 	}

@@ -1,3 +1,5 @@
+export { createHoocodeAuth, defaultAuthPath } from "./auth.js";
+export type { AuthCredential, AuthFileData, GetApiKey, HoocodeAuthOptions } from "./auth.js";
 export { REPLAY_BUFFER_SIZE, TeamChannel } from "./channel.js";
 export type { Subscribable, TeamEventListener } from "./channel.js";
 export { TaskDag } from "./dag.js";

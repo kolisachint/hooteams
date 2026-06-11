@@ -1,12 +1,30 @@
-import type { RoleConfig } from "@kolisachint/hooteams-orchestrator";
+import type { RoleConfig, ThinkingLevel } from "@kolisachint/hooteams-orchestrator";
+
+/** Team-wide fallbacks applied to roles that don't set their own. */
+export interface ConfigDefaults {
+	provider?: string;
+	model?: string;
+	thinkingLevel?: ThinkingLevel;
+}
 
 export interface ServerConfig {
+	defaults?: ConfigDefaults;
 	team: RoleConfig[];
 	maxConcurrent?: number;
 	port?: number;
 }
 
 export const DEFAULT_PORT = 4242;
+
+/** A team entry as written in the config file: model may be omitted when defaults.model covers it. */
+type RawRoleConfig = Omit<RoleConfig, "model"> & { model?: string };
+
+export interface RawServerConfig {
+	defaults?: ConfigDefaults;
+	team?: RawRoleConfig[];
+	maxConcurrent?: number;
+	port?: number;
+}
 
 /**
  * Load hooteams.config.json. Explicit path wins; otherwise looks in cwd.
@@ -22,26 +40,39 @@ export async function loadConfig(path?: string): Promise<ServerConfig> {
 		}
 		return { team: [] };
 	}
-	const raw = (await file.json()) as Partial<ServerConfig>;
+	const raw = (await file.json()) as RawServerConfig;
 	return validateConfig(raw, configPath);
 }
 
-export function validateConfig(raw: Partial<ServerConfig>, source: string): ServerConfig {
+export function validateConfig(raw: RawServerConfig, source: string): ServerConfig {
 	if (!Array.isArray(raw.team)) {
 		throw new Error(`${source}: "team" must be an array of role configs`);
 	}
+	const defaults = raw.defaults ?? {};
 	const seen = new Set<string>();
+	const team: RoleConfig[] = [];
 	for (const role of raw.team) {
-		if (typeof role.role !== "string" || typeof role.model !== "string" || typeof role.systemPrompt !== "string") {
-			throw new Error(`${source}: each team entry needs string fields "role", "model", and "systemPrompt"`);
+		if (typeof role.role !== "string" || typeof role.systemPrompt !== "string") {
+			throw new Error(`${source}: each team entry needs string fields "role" and "systemPrompt"`);
+		}
+		const model = role.model ?? defaults.model;
+		if (typeof model !== "string") {
+			throw new Error(`${source}: role "${role.role}" has no "model" and "defaults.model" is not set`);
 		}
 		if (seen.has(role.role)) {
 			throw new Error(`${source}: duplicate role "${role.role}"`);
 		}
 		seen.add(role.role);
+		team.push({
+			...role,
+			model,
+			provider: role.provider ?? defaults.provider,
+			thinkingLevel: role.thinkingLevel ?? defaults.thinkingLevel,
+		});
 	}
 	return {
-		team: raw.team,
+		defaults: raw.defaults,
+		team,
 		maxConcurrent: raw.maxConcurrent,
 		port: raw.port,
 	};
