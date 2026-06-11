@@ -1,0 +1,78 @@
+name: Release on PR Merge
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  release:
+    if: >
+      github.event.pull_request.merged == true && (
+        contains(github.event.pull_request.labels.*.name, 'npm:patch') ||
+        contains(github.event.pull_request.labels.*.name, 'npm:minor') ||
+        contains(github.event.pull_request.labels.*.name, 'npm:major')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Determine release type from label
+        id: release-type
+        run: |
+          if ${{ contains(github.event.pull_request.labels.*.name, 'npm:major') }}; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif ${{ contains(github.event.pull_request.labels.*.name, 'npm:minor') }}; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run release script
+        run: bun run release:${{ steps.release-type.outputs.type }}
+
+      - name: Push version bump and tag
+        run: git push --follow-tags origin main
+
+  github-release:
+    needs: [release]
+    if: >
+      github.event.pull_request.merged == true && (
+        contains(github.event.pull_request.labels.*.name, 'npm:patch') ||
+        contains(github.event.pull_request.labels.*.name, 'npm:minor') ||
+        contains(github.event.pull_request.labels.*.name, 'npm:major')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        run: |
+          VERSION=$(bun -e "const pkg = require('./packages/core/package.json'); console.log(pkg.version)")
+          gh release create "v$VERSION" --title "v$VERSION" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
