@@ -1,6 +1,6 @@
 {
 	"name": "@kolisachint/hooteams-server",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "HooTeams server: wires the orchestrator to the SSE bridge and serves it over HTTP",
 	"type": "module",
 	"main": "./src/lib.ts",
