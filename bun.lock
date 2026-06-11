@@ -12,7 +12,7 @@
     },
     "apps/cli": {
       "name": "@kolisachint/hooteams-cli",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "bin": {
         "hooteams": "./src/index.ts",
       },
@@ -23,7 +23,7 @@
     },
     "apps/server": {
       "name": "@kolisachint/hooteams-server",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@kolisachint/hooteams-bridge": "workspace:*",
         "@kolisachint/hooteams-orchestrator": "workspace:*",
@@ -31,14 +31,14 @@
     },
     "packages/bridge": {
       "name": "@kolisachint/hooteams-bridge",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@kolisachint/hooteams-orchestrator": "workspace:*",
       },
     },
     "packages/orchestrator": {
       "name": "@kolisachint/hooteams-orchestrator",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@kolisachint/hoocode-agent-core": "^0.4.44",
         "@kolisachint/hoocode-ai": "^0.4.44",
@@ -102,9 +102,9 @@
 
     "@google/genai": ["@google/genai@1.52.0", "", { "dependencies": { "google-auth-library": "^10.3.0", "p-retry": "^4.6.2", "protobufjs": "^7.5.4", "ws": "^8.18.0" }, "peerDependencies": { "@modelcontextprotocol/sdk": "^1.25.2" }, "optionalPeers": ["@modelcontextprotocol/sdk"] }, "sha512-gwSvbpiN/17O9TbsqSsE/OzZcpv5Fo4RQjdngGgogtuB9RsyJ8ZHhX5KjHj1bp5N9snN2eK8LDGXSaWW2hof8Q=="],
 
-    "@kolisachint/hoocode-agent-core": ["@kolisachint/hoocode-agent-core@0.4.44", "", { "dependencies": { "@kolisachint/hoocode-ai": "^0.4.44", "ignore": "^7.0.5", "typebox": "^1.1.24", "uuid": "^14.0.0", "yaml": "^2.8.2" } }, "sha512-YtkIWxb9anNzWz7ohp4ZEWNZeUIO18cZVe9uQiauGX7Kghv28U5Ep3G4J8zqQYBKjnsL5KQhtRQ5ke8W0zYXAw=="],
+    "@kolisachint/hoocode-agent-core": ["@kolisachint/hoocode-agent-core@0.4.49", "", { "dependencies": { "@kolisachint/hoocode-ai": "^0.4.49", "ignore": "^7.0.5", "typebox": "^1.1.24", "uuid": "^14.0.0", "yaml": "^2.8.2" } }, "sha512-5+ofa/Un3srxcoU9PcwDBw9BM0o10gBg+WgxunoXo7XXELIf1PyGlvh4gBI8kCyz/LySjhXvVPv5r167+798nA=="],
 
-    "@kolisachint/hoocode-ai": ["@kolisachint/hoocode-ai@0.4.44", "", { "dependencies": { "@anthropic-ai/sdk": "^0.91.1", "@aws-sdk/client-bedrock-runtime": "^3.1030.0", "@google/genai": "^1.40.0", "@mistralai/mistralai": "^2.2.0", "@smithy/node-http-handler": "^4.7.5", "@smithy/types": "^4.14.2", "chalk": "^5.6.2", "openai": "6.26.0", "partial-json": "^0.1.7", "proxy-agent": "^6.5.0", "typebox": "^1.1.24", "undici": "^7.19.1", "zod-to-json-schema": "^3.24.6" }, "bin": { "hoocode-ai": "dist/cli.js" } }, "sha512-YTUNt8nZJzgfHPKd0GoxG53UjJz24rgrdpIhlb7vrFW/bBNyifG80Ge6C9/uVmJZl3aoFDJDhtlJdiBJe7XUrA=="],
+    "@kolisachint/hoocode-ai": ["@kolisachint/hoocode-ai@0.4.49", "", { "dependencies": { "@anthropic-ai/sdk": "^0.91.1", "@aws-sdk/client-bedrock-runtime": "^3.1030.0", "@google/genai": "^1.40.0", "@mistralai/mistralai": "^2.2.0", "@smithy/node-http-handler": "^4.7.5", "@smithy/types": "^4.14.2", "chalk": "^5.6.2", "openai": "6.26.0", "partial-json": "^0.1.7", "proxy-agent": "^6.5.0", "typebox": "^1.1.24", "undici": "^7.19.1", "zod-to-json-schema": "^3.24.6" }, "bin": { "hoocode-ai": "dist/cli.js" } }, "sha512-zQ/12ceSRPATRT47WG9adQ4L+nxWNKbKMZtMtVAWMlbdQv5ymdhIkLBtD97yqKJPXxLGwVSPZFPJKj/VCiFl4g=="],
 
     "@kolisachint/hooteams-bridge": ["@kolisachint/hooteams-bridge@workspace:packages/bridge"],
 

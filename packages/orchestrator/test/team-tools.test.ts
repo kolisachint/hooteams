@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { closeMcpTools, type StreamFn } from "@kolisachint/hoocode-agent-core";
-import { type AssistantMessage, type AssistantMessageEvent, EventStream } from "@kolisachint/hoocode-ai";
+import { type AssistantMessage, type AssistantMessageEvent, type AssistantMessageEventStream } from "@kolisachint/hoocode-ai";
+import { EventStream } from "@kolisachint/hoocode-ai";
 import { TeamChannel } from "../src/channel.js";
 import { createSpawnAgentTool } from "../src/planner.js";
 import { Team } from "../src/team.js";
@@ -37,6 +38,10 @@ class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMe
 	}
 }
 
+function createAssistantMessageStream(): AssistantMessageEventStream {
+	return new MockAssistantStream() as unknown as AssistantMessageEventStream;
+}
+
 function createAssistantMessage(content: AssistantMessage["content"], stopReason = "stop"): AssistantMessage {
 	return {
 		role: "assistant",
@@ -61,7 +66,7 @@ function createAssistantMessage(content: AssistantMessage["content"], stopReason
 function toolCallingStreamFn(toolName: string, args: Record<string, unknown>): StreamFn {
 	let turn = 0;
 	return () => {
-		const stream = new MockAssistantStream();
+		const stream = createAssistantMessageStream();
 		const current = turn++;
 		queueMicrotask(() => {
 			if (current === 0) {
