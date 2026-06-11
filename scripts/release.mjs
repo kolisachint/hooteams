@@ -185,7 +185,7 @@ for (const pkg of packages) {
 	const pkgPath = join(packagesDir, pkg);
 	const pkgJson = JSON.parse(readFileSync(join(pkgPath, "package.json"), "utf-8"));
 	if (pkgJson.name && !pkgJson.private) {
-		run(`cd ${pkgPath} && bun publish --access public`);
+		run(`cd ${pkgPath} && npm publish --access public`);
 	}
 }
 console.log();
