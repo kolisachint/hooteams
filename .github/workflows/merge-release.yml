@@ -73,6 +73,11 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Create GitHub Release
         run: |
           VERSION=$(bun -e "const pkg = require('./packages/bridge/package.json'); console.log(pkg.version)")
