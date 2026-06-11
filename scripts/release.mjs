@@ -187,9 +187,7 @@ for (const workspaceDir of ["packages", "apps"]) {
 		if (!existsSync(pkgJsonPath)) continue;
 		const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
 		if (pkgJson.name && !pkgJson.private) {
-			// bun publish rewrites workspace:* deps to real versions; npm publish
-			// would upload them verbatim and break installs.
-			run(`cd ${join(dir, pkg)} && bun publish --access public`);
+			run(`cd ${join(dir, pkg)} && npm publish --access public`);
 		}
 	}
 }
