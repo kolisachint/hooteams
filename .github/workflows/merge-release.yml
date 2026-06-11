@@ -37,7 +37,8 @@ jobs:
           git config user.email "github-actions@github.com"
 
       - name: Configure npm auth
-        run: npm config set //registry.npmjs.org/:_authToken ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
 
       - name: Determine release type from label
         id: release-type
@@ -52,6 +53,8 @@ jobs:
 
       - name: Run release script
         run: bun run release:${{ steps.release-type.outputs.type }}
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Push version bump and tag
         run: git push --follow-tags origin main
