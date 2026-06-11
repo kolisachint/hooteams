@@ -25,7 +25,15 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 	const router = createRouter(team, channel, bridge);
 
 	for (const role of config.team) {
-		team.spawn(role);
+		if (role.mcpConfigPath) {
+			// MCP loading is async; spawn in the background so startup stays sync.
+			// A failed role is logged and skipped instead of taking the server down.
+			void team.spawnAsync(role).catch((error) => {
+				console.error(`[hooteams] failed to spawn role "${role.role}": ${String(error)}`);
+			});
+		} else {
+			team.spawn(role);
+		}
 	}
 
 	let stopping = false;

@@ -1,4 +1,4 @@
-import { Agent, type StreamFn } from "@kolisachint/hoocode-agent-core";
+import { Agent, type AgentTool, getDefaultTools, loadMcpTools, type StreamFn } from "@kolisachint/hoocode-agent-core";
 import { getModel, type Model } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
 import type { TeamChannel } from "./channel.js";
@@ -36,6 +36,33 @@ export class Team {
 	}
 
 	spawn(config: RoleConfig): Agent {
+		if (config.mcpConfigPath) {
+			throw new Error(`Role "${config.role}" declares mcpConfigPath; use spawnAsync() so MCP servers can be loaded`);
+		}
+		return this.register(config, this.baseTools(config));
+	}
+
+	/**
+	 * Spawn like spawn(), but await MCP server loading first. The merged tool
+	 * order is: defaultTools (if enabled), then config.tools, then MCP tools.
+	 */
+	async spawnAsync(config: RoleConfig): Promise<Agent> {
+		if (this.members.has(config.role)) {
+			throw new Error(`Team already has an agent for role "${config.role}"`);
+		}
+		const tools = this.baseTools(config);
+		if (config.mcpConfigPath) {
+			tools.push(...(await loadMcpTools(config.mcpConfigPath)));
+		}
+		return this.register(config, tools);
+	}
+
+	/** defaultTools (rooted at config.cwd) first, then the explicitly provided tools. */
+	private baseTools(config: RoleConfig): AgentTool<any>[] {
+		return [...(config.defaultTools ? getDefaultTools({ cwd: config.cwd }) : []), ...(config.tools ?? [])];
+	}
+
+	private register(config: RoleConfig, tools: AgentTool<any>[]): Agent {
 		if (this.members.has(config.role)) {
 			throw new Error(`Team already has an agent for role "${config.role}"`);
 		}
@@ -50,6 +77,7 @@ export class Team {
 				systemPrompt: config.systemPrompt,
 				model,
 				thinkingLevel: config.thinkingLevel ?? "off",
+				tools,
 			},
 			streamFn: this.options.streamFn,
 			getApiKey: this.options.getApiKey,
