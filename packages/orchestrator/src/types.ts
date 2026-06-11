@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentMessage, ThinkingLevel } from "@kolisachint/hoocode-agent-core";
+import type { AgentEvent, AgentMessage, AgentTool, ThinkingLevel } from "@kolisachint/hoocode-agent-core";
 
 /**
  * The single wire format every consumer (bridge, canvas, CLI attach) sees:
@@ -33,6 +33,14 @@ export interface RoleConfig {
 	/** Model provider for getModel(). Defaults to "anthropic". */
 	provider?: string;
 	thinkingLevel?: ThinkingLevel;
+	/** Extra tools handed to the agent as-is (programmatic configs only). */
+	tools?: AgentTool<any>[];
+	/** Prepend hoocode's built-in coding tools (bash/read/edit/write/grep/find/ls), rooted at `cwd`. */
+	defaultTools?: boolean;
+	/** Path to a standard mcp.json; its servers' tools are appended. Requires Team.spawnAsync(). */
+	mcpConfigPath?: string;
+	/** Working directory for the agent's tools. Defaults to process.cwd(). */
+	cwd?: string;
 }
 
 export interface TeamConfig {
@@ -40,4 +48,4 @@ export interface TeamConfig {
 	maxConcurrent?: number;
 }
 
-export type { AgentEvent, AgentMessage, ThinkingLevel };
+export type { AgentEvent, AgentMessage, AgentTool, ThinkingLevel };

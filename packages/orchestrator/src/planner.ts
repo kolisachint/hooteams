@@ -10,12 +10,21 @@ const spawnAgentParams = Type.Object({
 	model: Type.String({ description: "Model id the agent should use, e.g. claude-sonnet-4-5" }),
 	provider: Type.Optional(Type.String({ description: "Model provider, defaults to anthropic" })),
 	task: Type.Optional(Type.String({ description: "If given, immediately prompt the new agent with this task" })),
+	defaultTools: Type.Optional(
+		Type.Boolean({
+			description: "Give the agent hoocode's built-in coding tools (bash/read/edit/write/grep/find/ls)",
+		}),
+	),
+	mcpConfigPath: Type.Optional(
+		Type.String({ description: "Path to an mcp.json file; the agent also gets the tools of its MCP servers" }),
+	),
+	cwd: Type.Optional(Type.String({ description: "Working directory for the agent's tools" })),
 });
 
 /**
  * Tool handed to the planner agent so it can grow the team itself.
- * Spawning is synchronous; an optional initial task runs detached so the
- * planner keeps reasoning while the worker starts.
+ * Spawning awaits tool assembly (MCP servers included); an optional initial
+ * task runs detached so the planner keeps reasoning while the worker starts.
  */
 export function createSpawnAgentTool(team: Team): AgentTool<typeof spawnAgentParams> {
 	return {
@@ -23,6 +32,8 @@ export function createSpawnAgentTool(team: Team): AgentTool<typeof spawnAgentPar
 		label: "Spawn Agent",
 		description:
 			"Spawn a new team agent with the given role, system prompt, and model. " +
+			"Set defaultTools to equip it with the built-in coding tools, mcpConfigPath to add MCP server tools, " +
+			"and cwd to pick its working directory. " +
 			"Optionally give it an initial task to start working on immediately.",
 		parameters: spawnAgentParams,
 		execute: async (_toolCallId, params) => {
@@ -31,15 +42,20 @@ export function createSpawnAgentTool(team: Team): AgentTool<typeof spawnAgentPar
 				systemPrompt: params.systemPrompt,
 				model: params.model,
 				provider: params.provider,
+				defaultTools: params.defaultTools,
+				mcpConfigPath: params.mcpConfigPath,
+				cwd: params.cwd,
 			};
-			const agent = team.spawn(config);
+			const agent = await team.spawnAsync(config);
 			if (params.task) {
 				void agent.prompt(params.task).catch(() => {});
 			}
+			const toolCount = agent.state.tools.length;
+			const toolNote = toolCount > 0 ? ` with ${toolCount} tools` : "";
 			const note = params.task ? ` and started on its first task` : "";
 			return {
-				content: [{ type: "text", text: `Spawned agent "${params.role}" (${params.model})${note}.` }],
-				details: { role: params.role, model: params.model, started: Boolean(params.task) },
+				content: [{ type: "text", text: `Spawned agent "${params.role}" (${params.model})${toolNote}${note}.` }],
+				details: { role: params.role, model: params.model, tools: toolCount, started: Boolean(params.task) },
 			};
 		},
 	};
@@ -57,7 +73,10 @@ export interface PlannerOptions {
 
 const DEFAULT_PLANNER_PROMPT = `You are the planner of a team of AI agents.
 Break the user's goal into tasks, spawn specialist agents with the spawn_agent tool,
-and give each a focused system prompt and an initial task. Keep roles small and composable.`;
+and give each a focused system prompt and an initial task. Keep roles small and composable.
+Workers that must touch code or run commands need tools: pass defaultTools: true for the
+built-in coding tools (bash/read/edit/write/grep/find/ls), cwd to set their working
+directory, and mcpConfigPath to add tools from an mcp.json file.`;
 
 export const PLANNER_ROLE = "planner";
 
