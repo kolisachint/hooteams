@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.12] - 2026-06-12
 
 ### Added
 - Inter-agent result passing: `TaskNode.output` records the final assistant text of a completed node, and the orchestrator appends the outputs of a node's dependencies to its task prompt — results now chain through the dag instead of every task running siloed.
