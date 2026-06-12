@@ -8,6 +8,8 @@ import {
 	type StreamFn,
 } from "@kolisachint/hoocode-agent-core";
 import { getModel, type Model } from "@kolisachint/hoocode-ai";
+import { createDelegateTaskTool } from "./planner.js";
+import type { Team } from "./team.js";
 import type { NodeHandle } from "./team-orchestrator.js";
 import type { AgentEvent, RoleConfig, TaskNode } from "./types.js";
 
@@ -34,6 +36,8 @@ export interface NodeHarnessFactoryOptions {
 	resolveModel?: (config: RoleConfig) => Model<any>;
 	/** Forwarded to every node agent; lets tests stub the LLM. */
 	streamFn?: StreamFn;
+	/** Team instance for delegation support. When provided, agents get the delegate_task tool. */
+	team?: Team;
 }
 
 /** Deterministic node session id, so resuming a restored node reopens its conversation. */
@@ -82,6 +86,10 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 		const tools = [...(config.defaultTools ? getDefaultTools({ cwd: config.cwd }) : []), ...(config.tools ?? [])];
 		if (config.mcpConfigPath) {
 			tools.push(...(await loadMcpTools(config.mcpConfigPath)));
+		}
+		// Add delegate_task tool if team is provided, enabling agent-to-agent delegation
+		if (options.team) {
+			tools.push(createDelegateTaskTool(options.team));
 		}
 		const harness = new AgentHarness({
 			env: new NodeExecutionEnv({ cwd }),

@@ -1,0 +1,9 @@
+{
+  "tasks": [
+    {
+      "id": "plan",
+      "role": "planner",
+      "prompt": "You need to coordinate the team. First, spawn a coder to write code, then spawn a tester to test it. After both are done, delegate the review task to the coder."
+    }
+  ]
+}

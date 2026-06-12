@@ -151,7 +151,11 @@ export class Planner {
 				systemPrompt: options.systemPrompt ?? DEFAULT_PLANNER_PROMPT,
 				model,
 				thinkingLevel: options.thinkingLevel ?? "off",
-				tools: [createSpawnAgentTool(options.team), ...(options.tools ?? [])],
+				tools: [
+					createSpawnAgentTool(options.team),
+					createDelegateTaskTool(options.team),
+					...(options.tools ?? []),
+				],
 			},
 			streamFn: options.streamFn,
 			getApiKey: options.getApiKey,
