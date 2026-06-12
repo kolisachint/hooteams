@@ -1,8 +1,10 @@
-import { Agent, type AgentTool, type StreamFn } from "@kolisachint/hoocode-agent-core";
+import { Agent, type AgentMessage, type AgentTool, type StreamFn } from "@kolisachint/hoocode-agent-core";
 import { getModel, type Model, Type } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
 import type { TaskDag } from "./dag.js";
+import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import type { Team } from "./team.js";
+import { extractMessageText } from "./team-orchestrator.js";
 import type { RoleConfig, ThinkingLevel } from "./types.js";
 
 const spawnAgentParams = Type.Object({
@@ -124,6 +126,109 @@ export function createDelegateTaskTool(team: Team): AgentTool<typeof delegateTas
 	};
 }
 
+const askAgentParams = Type.Object({
+	role: Type.String({ description: "Role of the team member to ask" }),
+	question: Type.String({ description: "The question; the agent's next completed reply is returned as the answer" }),
+	timeoutSeconds: Type.Optional(Type.Number({ description: "How long to wait for the answer. Default 120" })),
+});
+
+export interface AskAgentOptions {
+	/**
+	 * Role of the asking agent. Asking your own role is rejected: the answer
+	 * could never arrive while this run blocks waiting for it.
+	 */
+	selfRole?: string;
+	/** Default seconds to wait for the target's reply. Default 120. */
+	defaultTimeoutSeconds?: number;
+}
+
+/**
+ * Request-response messaging between agents: steer `question` into the agent
+ * registered under `role` and resolve with the final assistant text of its
+ * next completed run (its next agent_end on the team channel). Rejects on a
+ * team_error for the role, or when timeoutMs elapses first. Pass timeoutMs 0
+ * to wait indefinitely.
+ */
+export function askAgent(team: Team, role: string, question: string, timeoutMs = 120_000): Promise<string> {
+	return new Promise<string>((resolve, reject) => {
+		let settled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let unsubscribe = () => {};
+		const settle = (apply: () => void): void => {
+			if (settled) return;
+			settled = true;
+			unsubscribe();
+			if (timer !== undefined) clearTimeout(timer);
+			apply();
+		};
+		// Subscribe before steering so an answer that lands immediately can't be missed.
+		unsubscribe = team.channel.subscribe((event) => {
+			if (event.type === "agent_end") {
+				settle(() => resolve(lastAssistantText(event.messages)));
+			} else if (event.type === "team_error") {
+				settle(() => reject(new Error(`Agent "${role}" failed while answering: ${event.error}`)));
+			}
+		}, role);
+		if (timeoutMs > 0) {
+			timer = setTimeout(
+				() => settle(() => reject(new Error(`Timed out after ${timeoutMs}ms waiting for "${role}" to answer`))),
+				timeoutMs,
+			);
+		}
+		try {
+			team.steer(role, question);
+		} catch (err) {
+			settle(() => reject(err instanceof Error ? err : new Error(String(err))));
+		}
+	});
+}
+
+/** Text of the last assistant message in a run's transcript ("" when there is none). */
+function lastAssistantText(messages: AgentMessage[]): string {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i]!;
+		if (message.role === "assistant") return extractMessageText(message);
+	}
+	return "";
+}
+
+/**
+ * Tool that lets an agent ask a named team member a question and wait for the
+ * answer — the request-response counterpart to fire-and-forget delegate_task.
+ * The caller's run blocks inside the tool call until the target's next
+ * agent_end fires, so the answer is in hand before the caller continues.
+ */
+export function createAskAgentTool(team: Team, options: AskAgentOptions = {}): AgentTool<typeof askAgentParams> {
+	return {
+		name: "ask_agent",
+		label: "Ask Agent",
+		description:
+			"Ask an existing team member a question and wait for its answer. The question is steered into " +
+			"the target agent and the final text of its next completed run is returned. Unlike delegate_task " +
+			"this blocks until the answer arrives — use it when you need the answer before continuing.",
+		parameters: askAgentParams,
+		execute: async (_toolCallId, params) => {
+			if (!team.has(params.role)) {
+				const roles = team.roles();
+				throw new Error(
+					`No agent for role "${params.role}". Available roles: ${roles.length > 0 ? roles.join(", ") : "(none — spawn one first)"}`,
+				);
+			}
+			if (options.selfRole !== undefined && params.role === options.selfRole) {
+				throw new Error(
+					`Cannot ask your own role "${params.role}" — the answer could never arrive while this run waits for it. Answer it yourself or ask another role.`,
+				);
+			}
+			const timeoutMs = (params.timeoutSeconds ?? options.defaultTimeoutSeconds ?? 120) * 1000;
+			const answer = await askAgent(team, params.role, params.question, timeoutMs);
+			return {
+				content: [{ type: "text", text: answer.length > 0 ? answer : `Agent "${params.role}" finished without a text reply.` }],
+				details: { role: params.role, answered: answer.length > 0 },
+			};
+		},
+	};
+}
+
 /** One task of a dry-run plan, shaped like a POST /runs task (and tasks.json). */
 export interface PlannedTask {
 	id: string;
@@ -228,6 +333,12 @@ export interface PlannerOptions {
 	/** Extra tools beyond spawn_agent. */
 	tools?: AgentTool<any>[];
 	/**
+	 * Project-scoped shared memory. A live planner gets memory_read and
+	 * memory_write tools backed by this store (ignored in dryRun mode, which
+	 * must not leave side effects).
+	 */
+	memory?: TeamMemory;
+	/**
 	 * Plan without executing: spawn_agent and delegate_task write to
 	 * `planBuffer` instead of touching the team, so the plan can be inspected
 	 * (and run later via tasks.json / POST /runs) before any agent starts.
@@ -240,7 +351,11 @@ Break the user's goal into tasks, spawn specialist agents with the spawn_agent t
 and give each a focused system prompt and an initial task. Keep roles small and composable.
 Workers that must touch code or run commands need tools: pass defaultTools: true for the
 built-in coding tools (bash/read/edit/write/grep/find/ls), cwd to set their working
-directory, and mcpConfigPath to add tools from an mcp.json file.`;
+directory, and mcpConfigPath to add tools from an mcp.json file.
+Use delegate_task to hand off work without waiting, and ask_agent when you need a team
+member's answer before continuing. When memory_read/memory_write are available, check the
+team's shared memory for prior-run context before planning, and record decisions worth
+keeping.`;
 
 const DRY_RUN_ADDENDUM = `
 
@@ -265,9 +380,16 @@ export class Planner {
 		if (options.dryRun) {
 			this.planBuffer = { roles: [], tasks: [] };
 		}
-		const teamTools = this.planBuffer
+		const teamTools: AgentTool<any>[] = this.planBuffer
 			? [createPlanSpawnAgentTool(this.planBuffer), createPlanDelegateTaskTool(this.planBuffer)]
-			: [createSpawnAgentTool(options.team), createDelegateTaskTool(options.team)];
+			: [
+					createSpawnAgentTool(options.team),
+					createDelegateTaskTool(options.team),
+					createAskAgentTool(options.team, { selfRole: PLANNER_ROLE }),
+				];
+		if (!options.dryRun && options.memory) {
+			teamTools.push(createMemoryReadTool(options.memory), createMemoryWriteTool(options.memory, { role: PLANNER_ROLE }));
+		}
 		this.agent = new Agent({
 			initialState: {
 				systemPrompt: (options.systemPrompt ?? DEFAULT_PLANNER_PROMPT) + (options.dryRun ? DRY_RUN_ADDENDUM : ""),

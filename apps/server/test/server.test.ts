@@ -12,6 +12,7 @@ import {
 	InMemorySessionRepo,
 	TaskDag,
 	type TaskNode,
+	TeamMemory,
 	TeamOrchestrator,
 	type TraceRun,
 } from "@kolisachint/hooteams-orchestrator";
@@ -262,12 +263,16 @@ async function pollTraceSettled(base: string): Promise<TraceRun> {
 
 describe("POST /runs end to end", () => {
 	const sessionsRoot = mkdtempSync(join(tmpdir(), "hooteams-server-runs-"));
-	afterAll(() => rmSync(sessionsRoot, { recursive: true, force: true }));
+	const memoryRoot = mkdtempSync(join(tmpdir(), "hooteams-server-memory-"));
+	afterAll(() => {
+		rmSync(sessionsRoot, { recursive: true, force: true });
+		rmSync(memoryRoot, { recursive: true, force: true });
+	});
 	const config = { team: [{ role: "ops", model: "fake-model", systemPrompt: "you ship things" }] };
 	const teamOptions = { resolveModel: () => fakeModel, streamFn: gateStreamFn, getApiKey: async () => "test-key" };
 
 	test("a posted run pauses on its gate, resumes over HTTP, and traces complete", async () => {
-		const running = startServer(config, { port: 0, sessionsRoot, teamOptions });
+		const running = startServer(config, { port: 0, sessionsRoot, memoryRoot, teamOptions });
 		const base = `http://localhost:${running.port}`;
 		try {
 			const started = await fetch(`${base}/runs`, {
@@ -340,7 +345,7 @@ describe("POST /runs end to end", () => {
 
 		const running = startServer(
 			{ ...config, validator: "You judge whether the team's haiku satisfies the goal." },
-			{ port: 0, sessionsRoot, teamOptions: { ...teamOptions, streamFn: validatingStreamFn } },
+			{ port: 0, sessionsRoot, memoryRoot, teamOptions: { ...teamOptions, streamFn: validatingStreamFn } },
 		);
 		const base = `http://localhost:${running.port}`;
 		try {
@@ -368,7 +373,7 @@ describe("POST /runs end to end", () => {
 	test("a paused run survives a server restart with resumeInterrupted", async () => {
 		const restartRoot = mkdtempSync(join(tmpdir(), "hooteams-server-restart-"));
 		try {
-			const first = startServer(config, { port: 0, sessionsRoot: restartRoot, teamOptions });
+			const first = startServer(config, { port: 0, sessionsRoot: restartRoot, memoryRoot, teamOptions });
 			const baseA = `http://localhost:${first.port}`;
 			const started = await fetch(`${baseA}/runs`, {
 				method: "POST",
@@ -381,7 +386,7 @@ describe("POST /runs end to end", () => {
 			await new Promise((resolve) => setTimeout(resolve, 100));
 			await first.stop();
 
-			const second = startServer(config, { port: 0, sessionsRoot: restartRoot, teamOptions, resumeInterrupted: true });
+			const second = startServer(config, { port: 0, sessionsRoot: restartRoot, memoryRoot, teamOptions, resumeInterrupted: true });
 			const baseB = `http://localhost:${second.port}`;
 			try {
 				const pending = await pollPending(baseB);
@@ -406,6 +411,55 @@ describe("POST /runs end to end", () => {
 			}
 		} finally {
 			rmSync(restartRoot, { recursive: true, force: true });
+		}
+	});
+
+	test("task outputs are recorded to shared memory and bootstrap the next run", async () => {
+		// Replies reveal whether the task prompt carried prior-run memory.
+		const memoryAwareStreamFn: StreamFn = ((_model: any, context: any) => {
+			const last = context.messages[context.messages.length - 1] as { content?: Array<{ type: string; text?: string }> };
+			const text = (last?.content ?? [])
+				.map((part) => (part.type === "text" ? (part.text ?? "") : ""))
+				.join("\n");
+			const reply = text.includes("Shared team memory") ? "bootstrapped from memory" : "learned something new";
+			const stream = new MockAssistantStream() as unknown as AssistantMessageEventStream;
+			queueMicrotask(() => {
+				(stream as any).push({ type: "done", reason: "stop", message: assistantReply(reply) });
+			});
+			return stream;
+		}) as StreamFn;
+
+		const freshMemoryRoot = mkdtempSync(join(tmpdir(), "hooteams-server-memflow-"));
+		const running = startServer(
+			{ ...config, project: "memflow" },
+			{ port: 0, sessionsRoot, memoryRoot: freshMemoryRoot, teamOptions: { ...teamOptions, streamFn: memoryAwareStreamFn } },
+		);
+		const base = `http://localhost:${running.port}`;
+		try {
+			const postRun = (id: string) =>
+				fetch(`${base}/runs`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ tasks: [{ id, role: "ops", prompt: `do ${id}` }] }),
+				});
+
+			expect((await postRun("learn")).status).toBe(202);
+			const first = await pollTraceSettled(base);
+			expect(first.dag?.learn?.output).toBe("learned something new");
+
+			// The first run's output was auto-recorded into the project store.
+			const memory = new TeamMemory({ memoryRoot: freshMemoryRoot, project: "memflow" });
+			const entries = await memory.list();
+			expect(entries).toHaveLength(1);
+			expect(entries[0]).toMatchObject({ value: "learned something new", tags: ["ops", "done"] });
+
+			// A second run on the same project bootstraps from it.
+			expect((await postRun("apply")).status).toBe(202);
+			const second = await pollTraceSettled(base);
+			expect(second.dag?.apply?.output).toBe("bootstrapped from memory");
+		} finally {
+			await running.stop();
+			rmSync(freshMemoryRoot, { recursive: true, force: true });
 		}
 	});
 });

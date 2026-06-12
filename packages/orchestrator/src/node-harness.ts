@@ -9,7 +9,8 @@ import {
 	type StreamFn,
 } from "@kolisachint/hoocode-agent-core";
 import { getModel, type Model } from "@kolisachint/hoocode-ai";
-import { createDelegateTaskTool } from "./planner.js";
+import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
+import { createAskAgentTool, createDelegateTaskTool } from "./planner.js";
 import type { Team } from "./team.js";
 import { extractMessageText, type NodeHandle } from "./team-orchestrator.js";
 import type { AgentEvent, AgentMessage, RoleConfig, TaskNode } from "./types.js";
@@ -97,8 +98,10 @@ export interface NodeHarnessFactoryOptions {
 	resolveModel?: (config: RoleConfig) => Model<any>;
 	/** Forwarded to every node agent; lets tests stub the LLM. */
 	streamFn?: StreamFn;
-	/** Team instance for delegation support. When provided, agents get the delegate_task tool. */
+	/** Team instance for inter-agent messaging. When provided, agents get the delegate_task and ask_agent tools. */
 	team?: Team;
+	/** Project-scoped shared memory. When provided, agents get the memory_read and memory_write tools. */
+	memory?: TeamMemory;
 }
 
 /** Deterministic node session id, so resuming a restored node reopens its conversation. */
@@ -148,9 +151,16 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 		if (config.mcpConfigPath) {
 			tools.push(...(await loadMcpTools(config.mcpConfigPath)));
 		}
-		// Add delegate_task tool if team is provided, enabling agent-to-agent delegation
+		// Inter-agent messaging: fire-and-forget delegation plus blocking
+		// request-response (ask_agent waits for the target's next agent_end).
 		if (options.team) {
 			tools.push(createDelegateTaskTool(options.team));
+			tools.push(createAskAgentTool(options.team, { selfRole: node.role }));
+		}
+		// Shared cross-run memory, stamped with this node's run/role provenance.
+		if (options.memory) {
+			tools.push(createMemoryReadTool(options.memory));
+			tools.push(createMemoryWriteTool(options.memory, { runId: options.runId, role: node.role }));
 		}
 		const harness = new AgentHarness({
 			env: new NodeExecutionEnv({ cwd }),

@@ -40,6 +40,25 @@ export interface RunValidator {
 	maxRounds?: number;
 }
 
+/**
+ * Cross-run shared memory hook, decoupled from any concrete store. TeamMemory
+ * satisfies recordTask directly; hosts compute bootstrapContext once before
+ * the run (e.g. await TeamMemory.bootstrapContext()).
+ */
+export interface RunMemory {
+	/**
+	 * Context from prior runs on the project, appended to the prompts of root
+	 * tasks (tasks with no dependencies) so a new run starts with what the
+	 * team already learned.
+	 */
+	bootstrapContext?: string;
+	/**
+	 * Persist one settled task's output, called for every done/error task at
+	 * run end. Failures are surfaced as team_error events, never thrown.
+	 */
+	recordTask: (task: { runId: string; taskId: string; role: string; status: "done" | "error"; output?: string }) => Promise<void> | void;
+}
+
 export interface TeamOrchestratorOptions {
 	/**
 	 * Run session owning all orchestrator-level entries (dag snapshots, task
@@ -74,6 +93,11 @@ export interface TeamOrchestratorOptions {
 	onTaskFailed?: (node: TaskNode, error: string) => void;
 	/** Goal-completion validation run after the dag completes cleanly. */
 	validator?: RunValidator;
+	/**
+	 * Cross-run shared memory: bootstrapContext is appended to root task
+	 * prompts, and every settled task is recorded via recordTask at run end.
+	 */
+	memory?: RunMemory;
 }
 
 /**
@@ -149,6 +173,7 @@ export class TeamOrchestrator {
 	private readonly taskPrompt: (node: TaskNode) => string;
 	private readonly onTaskFailed?: (node: TaskNode, error: string) => void;
 	private readonly validator?: RunValidator;
+	private readonly memory?: RunMemory;
 	private validationRounds = 0;
 	/** True while a validation pass is in flight; blocks settlement. */
 	private validating = false;
@@ -174,6 +199,7 @@ export class TeamOrchestrator {
 		this.taskPrompt = options.taskPrompt ?? ((node) => node.id);
 		this.onTaskFailed = options.onTaskFailed;
 		this.validator = options.validator;
+		this.memory = options.memory;
 		this.runId = options.runId ?? randomUUID();
 	}
 
@@ -347,15 +373,24 @@ export class TeamOrchestrator {
 		}
 	}
 
-	/** The node's task prompt plus the outputs of its completed dependencies. */
+	/**
+	 * The node's task prompt plus the outputs of its completed dependencies.
+	 * Root tasks (no deps) additionally get the prior-run memory bootstrap, so
+	 * a new run starts where earlier runs on the project left off.
+	 */
 	private composePrompt(node: TaskNode): string {
-		const base = this.taskPrompt(node);
+		const parts = [this.taskPrompt(node)];
 		const sections = node.deps
 			.map((dep) => this.dag.get(dep))
 			.filter((dep): dep is TaskNode => Boolean(dep?.output))
 			.map((dep) => `### ${dep.id} (${dep.role})\n${dep.output}`);
-		if (sections.length === 0) return base;
-		return `${base}\n\nResults from the tasks this one depends on:\n\n${sections.join("\n\n")}`;
+		if (sections.length > 0) {
+			parts.push(`Results from the tasks this one depends on:\n\n${sections.join("\n\n")}`);
+		}
+		if (node.deps.length === 0 && this.memory?.bootstrapContext) {
+			parts.push(this.memory.bootstrapContext);
+		}
+		return parts.join("\n\n");
 	}
 
 	private async dispatchNode(node: TaskNode, text: string): Promise<void> {
@@ -646,16 +681,48 @@ export class TeamOrchestrator {
 
 	private finish(failed: boolean): void {
 		this.finished = true;
-		this.persist("run_end", { runId: this.runId, status: failed ? "failed" : "complete", ts: Date.now() });
-		this.snapshotDag();
-		this.publish({
-			type: failed ? "dag_failed" : "dag_complete",
-			runId: this.runId,
-			role: "orchestrator",
-			agentId: this.runId,
-			ts: Date.now(),
-		});
-		void this.flush().then(this.settle);
+		// Memory records before run_end persists and the dag event publishes, so
+		// anything that observes the run as settled can already bootstrap a
+		// follow-up run from this run's outputs.
+		void this.recordToMemory()
+			.then(() => {
+				this.persist("run_end", { runId: this.runId, status: failed ? "failed" : "complete", ts: Date.now() });
+				this.snapshotDag();
+				this.publish({
+					type: failed ? "dag_failed" : "dag_complete",
+					runId: this.runId,
+					role: "orchestrator",
+					agentId: this.runId,
+					ts: Date.now(),
+				});
+				return this.flush();
+			})
+			.then(this.settle);
+	}
+
+	/** Record every settled task in shared memory. Best-effort: a failing store must not fail the run. */
+	private async recordToMemory(): Promise<void> {
+		if (!this.memory) return;
+		for (const node of this.dag.all()) {
+			if (node.status !== "done" && node.status !== "error") continue;
+			try {
+				await this.memory.recordTask({
+					runId: this.runId,
+					taskId: node.id,
+					role: node.role,
+					status: node.status,
+					output: node.output,
+				});
+			} catch (err) {
+				this.publish({
+					type: "team_error",
+					error: `memory write failed for task "${node.id}": ${err instanceof Error ? err.message : String(err)}`,
+					role: "orchestrator",
+					agentId: this.runId,
+					ts: Date.now(),
+				});
+			}
+		}
 	}
 
 	private runValidation(): void {

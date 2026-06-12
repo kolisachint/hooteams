@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- Agent memory & shared knowledge store: `TeamMemory` is a project-scoped (not per-run) JSON store under `~/.hooteams/memory`, shared by every agent on the team and surviving across runs. Agents read/write it through the new `memory_read`/`memory_write` tools (`createMemoryReadTool`/`createMemoryWriteTool`); `TeamOrchestratorOptions.memory` (the new `RunMemory` hook) auto-records every settled task's output at run end and injects prior-run context (`bootstrapContext`) into root task prompts, so new runs on the same project start from what earlier runs learned. Store operations are serialized and saves are atomic (temp file + rename); helpers `projectKeyFromCwd()` and `defaultMemoryRoot()` are exported.
+- Structured agent-to-agent messaging: `ask_agent(role, question)` (`createAskAgentTool`) is the request-response counterpart to fire-and-forget `delegate_task` — the question is steered into the target agent and the tool blocks until the target's next `agent_end`, returning its final reply text. Asking your own role is rejected (it would deadlock), unknown roles list the available ones, and an optional `timeoutSeconds` (default 120) bounds the wait. The bare `askAgent()` promise helper is exported for hosts. The live `Planner` and every `createNodeHarnessFactory` node agent (when `team` is provided) get the tool automatically.
+- `NodeHarnessFactoryOptions.memory` and `PlannerOptions.memory` wire the memory tools into node agents and the live planner.
+
 ## [0.1.12] - 2026-06-12
 
 ### Added
