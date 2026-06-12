@@ -85,6 +85,7 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 				getApiKey: teamOptions.getApiKey,
 				resolveModel: teamOptions.resolveModel,
 				streamFn: teamOptions.streamFn,
+				team,  // Pass team to enable delegation tools
 			}),
 			taskPrompt: (node: { id: string }) => prompts.get(node.id) ?? node.id,
 		};
