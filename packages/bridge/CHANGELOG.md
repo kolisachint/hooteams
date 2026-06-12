@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.10] - 2026-06-12
 
 ### Added
 - HITL wire contract, consumed identically by hoocanvas and hoocode `--team`: `GET /tasks/pending`, `POST /tasks/:taskId/resume` (`{ option, feedback? }`; 409 when nothing is pending — first answer wins), `GET /trace`, and `GET /runs/:runId/trace`. Routes 404 until the host attaches a run via `RouterOptions.hitl`.

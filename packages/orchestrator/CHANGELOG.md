@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.10] - 2026-06-12
 
 ### Added
 - `TeamOrchestrator`: harness-per-node dag execution with a `maxConcurrent` slot pool, human-in-the-loop pauses via the `AWAITING_APPROVAL: question | opt1, opt2` marker, `resume(taskId, option)`, crash recovery with `restoreFromSession()`, and audit trails with `buildTrace()`. All run state persists to a hoocode `Session` through a serialized write queue. This is the path forward for team execution; `Orchestrator` remains for the planner flow.
