@@ -16,6 +16,13 @@ export interface ServerConfig {
 	sessionsRoot?: string;
 	/** Restore and continue an interrupted run on startup. Defaults to false. */
 	resumeInterrupted?: boolean;
+	/**
+	 * System prompt for a goal-completion validator. When set, every run that
+	 * completes cleanly is reviewed by a validator agent (using defaults.model
+	 * or the first team role's model); an unmet verdict sends the named task
+	 * back for rework before the run settles.
+	 */
+	validator?: string;
 }
 
 export const DEFAULT_PORT = 4242;
@@ -30,6 +37,7 @@ export interface RawServerConfig {
 	port?: number;
 	sessionsRoot?: string;
 	resumeInterrupted?: boolean;
+	validator?: string;
 }
 
 /**
@@ -79,6 +87,9 @@ export function validateConfig(raw: RawServerConfig, source: string): ServerConf
 	if (raw.sessionsRoot !== undefined && typeof raw.sessionsRoot !== "string") {
 		throw new Error(`${source}: "sessionsRoot" must be a string`);
 	}
+	if (raw.validator !== undefined && typeof raw.validator !== "string") {
+		throw new Error(`${source}: "validator" must be a string (the validator agent's system prompt)`);
+	}
 	return {
 		defaults: raw.defaults,
 		team,
@@ -86,5 +97,6 @@ export function validateConfig(raw: RawServerConfig, source: string): ServerConf
 		port: raw.port,
 		sessionsRoot: raw.sessionsRoot,
 		resumeInterrupted: raw.resumeInterrupted === true,
+		validator: raw.validator,
 	};
 }

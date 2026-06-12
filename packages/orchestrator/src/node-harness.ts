@@ -1,4 +1,5 @@
 import {
+	Agent,
 	AgentHarness,
 	getDefaultTools,
 	JsonlSessionRepo,
@@ -10,8 +11,8 @@ import {
 import { getModel, type Model } from "@kolisachint/hoocode-ai";
 import { createDelegateTaskTool } from "./planner.js";
 import type { Team } from "./team.js";
-import type { NodeHandle } from "./team-orchestrator.js";
-import type { AgentEvent, RoleConfig, TaskNode } from "./types.js";
+import { extractMessageText, type NodeHandle } from "./team-orchestrator.js";
+import type { AgentEvent, AgentMessage, RoleConfig, TaskNode } from "./types.js";
 
 /**
  * Appended to every node agent's system prompt so real models know how to
@@ -22,6 +23,66 @@ export const HITL_SYSTEM_PROMPT = `When you need a human decision before you can
 AWAITING_APPROVAL: <question> | <option 1>, <option 2>
 
 The chosen option (possibly followed by extra feedback on the next lines) arrives as the next user message. Only use this for decisions you cannot make yourself.`;
+
+/**
+ * Appended to a goal validator's system prompt so it answers in the verdict
+ * shape GOAL_UNMET_MARKER parses (see team-orchestrator.ts).
+ */
+export const VALIDATOR_PROTOCOL = `You receive the team's goal and the output of every completed task. Judge whether the goal was actually achieved — completed tasks alone do not prove it. End your reply with exactly one line:
+
+GOAL_MET
+or
+GOAL_UNMET: <reason> | <id of the task to re-run>
+
+Name the single task whose work most needs redoing. Only declare GOAL_UNMET for substantive gaps, not stylistic preferences.`;
+
+export interface ValidatorAgentOptions {
+	/** What the validator is, e.g. TeamConfig.validator. The verdict protocol is appended. */
+	systemPrompt: string;
+	/** Model id, resolved via getModel() unless resolveModel is given. */
+	model: string;
+	/** Model provider for getModel(). Defaults to "anthropic". */
+	provider?: string;
+	/** Resolves provider credentials per request, e.g. createHoocodeAuth(). */
+	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
+	/** Override model lookup (tests inject fakes). */
+	resolveModel?: (config: RoleConfig) => Model<any>;
+	/** Forwarded to the validator agent; lets tests stub the LLM. */
+	streamFn?: StreamFn;
+}
+
+/**
+ * Build a RunValidator.validate function: each validation pass runs a fresh
+ * single-turn Agent (no tools, no shared session) and resolves with its final
+ * reply text for the orchestrator to parse against GOAL_UNMET_MARKER.
+ */
+export function createValidatorAgent(options: ValidatorAgentOptions): (context: string) => Promise<string> {
+	const config: RoleConfig = {
+		role: "validator",
+		systemPrompt: `${options.systemPrompt}\n\n${VALIDATOR_PROTOCOL}`,
+		model: options.model,
+		provider: options.provider,
+	};
+	return async (context: string): Promise<string> => {
+		const model = options.resolveModel
+			? options.resolveModel(config)
+			: getModel((config.provider ?? "anthropic") as any, config.model as any);
+		if (!model) {
+			throw new Error(`Unknown model "${config.model}" for provider "${config.provider ?? "anthropic"}"`);
+		}
+		const agent = new Agent({
+			initialState: { systemPrompt: config.systemPrompt, model, thinkingLevel: "off", tools: [] },
+			streamFn: options.streamFn,
+			getApiKey: options.getApiKey,
+		});
+		await agent.prompt(context);
+		const messages = agent.state.messages as AgentMessage[];
+		for (let i = messages.length - 1; i >= 0; i--) {
+			if (messages[i]!.role === "assistant") return extractMessageText(messages[i]!);
+		}
+		return "";
+	};
+}
 
 export interface NodeHarnessFactoryOptions {
 	/** Role configs the dag's nodes are matched against by node.role. */

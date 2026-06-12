@@ -2,9 +2,13 @@ import { createRouter, type HitlRun, RunRejectedError, SSEBridge, type StartRunR
 import {
 	createHoocodeAuth,
 	createNodeHarnessFactory,
+	createValidatorAgent,
 	JsonlSessionRepo,
+	PLANNER_ROLE,
+	type RoleConfig,
 	type Session,
 	TaskDag,
+	type TaskNode,
 	Team,
 	TeamChannel,
 	TeamOrchestrator,
@@ -72,14 +76,51 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		};
 	};
 
-	const orchestratorOptions = (runId: string, tasks: StartRunTask[]) => {
+	/** Configured team plus any per-run roles; configured roles win on a name clash. */
+	const mergeRoles = (extraRoles: RoleConfig[] = []): RoleConfig[] => {
+		const configured = new Set(config.team.map((role) => role.role));
+		return [...config.team, ...extraRoles.filter((role) => !configured.has(role.role))];
+	};
+
+	// A permanently failed task (retries exhausted) is steered to the planner
+	// agent, when one is configured, for structural recovery: it can spawn a
+	// specialist with spawn_agent or re-delegate with delegate_task.
+	const escalateFailure = (node: TaskNode, error: string): void => {
+		if (!team.has(PLANNER_ROLE)) return;
+		team.steer(
+			PLANNER_ROLE,
+			`Task "${node.id}" (role "${node.role}") failed permanently after ${(node.attempts ?? 0) + 1} attempt(s): ${error}\n` +
+				"Review the failure and recover the goal — e.g. spawn a recovery specialist with spawn_agent or re-delegate with delegate_task.",
+		);
+	};
+
+	// Goal validation reviews every cleanly completed run when the config sets
+	// a validator prompt; the validator runs on defaults.model or the first
+	// team role's model.
+	const validatorModel = config.defaults?.model ?? config.team[0]?.model;
+	const validatorFor = (goal?: string) =>
+		config.validator && validatorModel
+			? {
+					goal,
+					validate: createValidatorAgent({
+						systemPrompt: config.validator,
+						model: validatorModel,
+						provider: config.defaults?.provider,
+						getApiKey: teamOptions.getApiKey,
+						resolveModel: teamOptions.resolveModel,
+						streamFn: teamOptions.streamFn,
+					}),
+				}
+			: undefined;
+
+	const orchestratorOptions = (runId: string, tasks: StartRunTask[], goal?: string, extraRoles?: RoleConfig[]) => {
 		const prompts = new Map(tasks.filter((task) => task.prompt).map((task) => [task.id, task.prompt!]));
 		return {
 			channel,
 			runId,
 			maxConcurrent: config.maxConcurrent,
 			createHarness: createNodeHarnessFactory({
-				roles: config.team,
+				roles: mergeRoles(extraRoles),
 				runId,
 				sessionsRoot,
 				getApiKey: teamOptions.getApiKey,
@@ -88,6 +129,8 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 				team,  // Pass team to enable delegation tools
 			}),
 			taskPrompt: (node: { id: string }) => prompts.get(node.id) ?? node.id,
+			onTaskFailed: escalateFailure,
+			validator: validatorFor(goal),
 		};
 	};
 
@@ -95,7 +138,7 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		if (activeOrchestrator && !activeOrchestrator.isSettled) {
 			throw new RunRejectedError(`Run "${activeOrchestrator.runId}" is still active`, 409);
 		}
-		const roles = new Set(config.team.map((role) => role.role));
+		const roles = new Set(mergeRoles(request.roles).map((role) => role.role));
 		const dag = new TaskDag();
 		try {
 			for (const task of request.tasks) {
@@ -105,7 +148,7 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 						`Unknown role "${task.role}". Configured roles: ${available.length > 0 ? available.join(", ") : "(none)"}`,
 					);
 				}
-				dag.add({ id: task.id, role: task.role, deps: task.deps });
+				dag.add({ id: task.id, role: task.role, deps: task.deps, retries: task.retries });
 			}
 			dag.topologicalOrder(); // throws on unknown deps and cycles
 		} catch (err) {
@@ -113,10 +156,13 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		}
 		const runId = randomUUID();
 		const session = await repo.create({ cwd: runsCwd, id: `run-${runId}` });
-		// Task prompts live only in this request; persist them so a restored
-		// run re-dispatches reset nodes with their real prompts.
-		await session.appendCustomEntry("run_config", { runId, tasks: request.tasks });
-		const orchestrator = new TeamOrchestrator(dag, { session, ...orchestratorOptions(runId, request.tasks) });
+		// Task prompts, goal, and per-run roles live only in this request;
+		// persist them so a restored run re-dispatches with the real config.
+		await session.appendCustomEntry("run_config", { runId, tasks: request.tasks, goal: request.goal, roles: request.roles });
+		const orchestrator = new TeamOrchestrator(dag, {
+			session,
+			...orchestratorOptions(runId, request.tasks, request.goal, request.roles),
+		});
 		attachOrchestrator(orchestrator, session);
 		void orchestrator.run();
 		return { runId };
@@ -132,6 +178,8 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		const session = await repo.open(latest);
 		let runId: string | undefined;
 		let tasks: StartRunTask[] = [];
+		let goal: string | undefined;
+		let runRoles: RoleConfig[] | undefined;
 		let ended = false;
 		for (const entry of await session.getEntries()) {
 			if (entry.type !== "custom") continue;
@@ -139,6 +187,8 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 			if (entry.customType === "run_config") {
 				runId ??= data?.runId;
 				tasks = (data?.tasks as StartRunTask[] | undefined) ?? [];
+				goal = data?.goal;
+				runRoles = data?.roles as RoleConfig[] | undefined;
 			} else if (entry.customType === "run_start") {
 				runId ??= data?.runId;
 			} else if (entry.customType === "run_end") {
@@ -146,7 +196,7 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 			}
 		}
 		if (!runId || ended) return;
-		const orchestrator = await TeamOrchestrator.restoreFromSession(session, orchestratorOptions(runId, tasks));
+		const orchestrator = await TeamOrchestrator.restoreFromSession(session, orchestratorOptions(runId, tasks, goal, runRoles));
 		attachOrchestrator(orchestrator, session);
 		console.log(`[hooteams] restored interrupted run ${runId}`);
 		void orchestrator.run();

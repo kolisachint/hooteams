@@ -322,6 +322,49 @@ describe("POST /runs end to end", () => {
 		}
 	});
 
+	test("per-run roles and goal validation flow through POST /runs", async () => {
+		// Workers reply with work; the goal validator (recognizable by its
+		// verdict question) approves.
+		const validatingStreamFn: StreamFn = ((_model: any, context: any) => {
+			const last = context.messages[context.messages.length - 1] as { content?: Array<{ type: string; text?: string }> };
+			const text = (last?.content ?? [])
+				.map((part) => (part.type === "text" ? (part.text ?? "") : ""))
+				.join("\n");
+			const reply = text.includes("Did the team actually achieve the goal?") ? "GOAL_MET" : "a fine haiku";
+			const stream = new MockAssistantStream() as unknown as AssistantMessageEventStream;
+			queueMicrotask(() => {
+				(stream as any).push({ type: "done", reason: "stop", message: assistantReply(reply) });
+			});
+			return stream;
+		}) as StreamFn;
+
+		const running = startServer(
+			{ ...config, validator: "You judge whether the team's haiku satisfies the goal." },
+			{ port: 0, sessionsRoot, teamOptions: { ...teamOptions, streamFn: validatingStreamFn } },
+		);
+		const base = `http://localhost:${running.port}`;
+		try {
+			const started = await fetch(`${base}/runs`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					goal: "write a haiku about shipping",
+					roles: [{ role: "poet", systemPrompt: "you write haikus", model: "fake-model" }],
+					tasks: [{ id: "draft", role: "poet", prompt: "write the haiku", retries: 1 }],
+				}),
+			});
+			expect(started.status).toBe(202);
+
+			const trace = await pollTraceSettled(base);
+			expect(trace.status).toBe("complete");
+			// the per-run "poet" role (not in the configured team) ran the task
+			expect(trace.tasks[0]).toMatchObject({ taskId: "draft", role: "poet", status: "done" });
+			expect(trace.dag?.draft).toMatchObject({ output: "a fine haiku", retries: 1 });
+		} finally {
+			await running.stop();
+		}
+	});
+
 	test("a paused run survives a server restart with resumeInterrupted", async () => {
 		const restartRoot = mkdtempSync(join(tmpdir(), "hooteams-server-restart-"));
 		try {
