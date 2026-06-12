@@ -42,6 +42,22 @@ export interface TaskStartedEvent {
 	ts: number;
 }
 
+/**
+ * A settled node is being re-dispatched: a failed run consuming one of its
+ * retries, or a validator verdict sending a "done" task back for rework.
+ */
+export interface TaskRetriedEvent {
+	type: "task_retried";
+	taskId: string;
+	role: string;
+	agentId: string;
+	/** Failed attempts consumed so far, counting this one. */
+	attempt: number;
+	/** What sent the task back: the run error or the validator's reason. */
+	error: string;
+	ts: number;
+}
+
 /** A dag node settled as done or error. */
 export interface TaskFinishedEvent {
 	type: "task_finished";
@@ -77,6 +93,7 @@ export type TeamEvent =
 	| TaskPausedEvent
 	| TaskResumedEvent
 	| TaskStartedEvent
+	| TaskRetriedEvent
 	| TaskFinishedEvent
 	| DagSettledEvent;
 
@@ -92,6 +109,15 @@ export interface TaskNode {
 	status: AgentStatus;
 	/** Messages produced by the node's run, recorded by markDone. */
 	results?: AgentMessage[];
+	/**
+	 * Final assistant text of the node's run, recorded on completion and
+	 * injected into the prompts of nodes that depend on this one.
+	 */
+	output?: string;
+	/** Extra dispatch attempts the node gets after a failed run. Default 0. */
+	retries?: number;
+	/** Failed attempts consumed so far; set by the orchestrator. */
+	attempts?: number;
 }
 
 /** Configuration for a single team member. */
@@ -116,6 +142,12 @@ export interface RoleConfig {
 export interface TeamConfig {
 	roles: RoleConfig[];
 	maxConcurrent?: number;
+	/**
+	 * System prompt for a goal-completion validator. When set, a validator
+	 * agent reviews the goal and every task's output after the dag completes,
+	 * and an unmet verdict sends the named task back for rework.
+	 */
+	validator?: string;
 }
 
 /** Shape of TaskDag.toJSON(), as persisted in "dag_state" session entries. */

@@ -1,4 +1,4 @@
-import type { Team, TeamChannel } from "@kolisachint/hooteams-orchestrator";
+import type { RoleConfig, Team, TeamChannel } from "@kolisachint/hooteams-orchestrator";
 import type { SSEBridge } from "./sse.js";
 
 const CORS_HEADERS = {
@@ -53,10 +53,23 @@ export interface StartRunTask {
 	prompt?: string;
 	/** Ids of tasks that must finish before this one starts. */
 	deps?: string[];
+	/** Extra attempts the task gets after a failed run. Default 0. */
+	retries?: number;
 }
 
 export interface StartRunRequest {
 	tasks: StartRunTask[];
+	/**
+	 * The goal the run pursues. Passed to the host's goal validator (when one
+	 * is configured) so completion is judged against it.
+	 */
+	goal?: string;
+	/**
+	 * Role configs to add for this run on top of the host's configured team,
+	 * e.g. the roles a dry-run plan (hooteams plan) produced. Roles already
+	 * configured under the same name win.
+	 */
+	roles?: RoleConfig[];
 }
 
 /**
@@ -86,9 +99,29 @@ export interface RouterOptions {
 }
 
 /** Shape-validate a POST /runs body. Returns an error message, or undefined when valid. */
-function validateStartRun(body: { tasks?: unknown }): string | undefined {
+function validateStartRun(body: { tasks?: unknown; goal?: unknown; roles?: unknown }): string | undefined {
 	if (!Array.isArray(body.tasks) || body.tasks.length === 0) {
-		return "Expected { tasks: [{ id, role, prompt?, deps? }] } with at least one task";
+		return "Expected { tasks: [{ id, role, prompt?, deps?, retries? }] } with at least one task";
+	}
+	if (body.goal !== undefined && typeof body.goal !== "string") {
+		return '"goal" must be a string';
+	}
+	if (body.roles !== undefined) {
+		if (!Array.isArray(body.roles)) {
+			return '"roles" must be an array of role configs';
+		}
+		for (const role of body.roles as Array<Record<string, unknown> | null>) {
+			if (
+				role === null ||
+				typeof role !== "object" ||
+				typeof role.role !== "string" ||
+				role.role.length === 0 ||
+				typeof role.systemPrompt !== "string" ||
+				typeof role.model !== "string"
+			) {
+				return 'Each role needs non-empty string fields "role", "systemPrompt", and "model"';
+			}
+		}
 	}
 	for (const task of body.tasks as Array<Record<string, unknown> | null>) {
 		if (
@@ -106,6 +139,9 @@ function validateStartRun(body: { tasks?: unknown }): string | undefined {
 		}
 		if (task.deps !== undefined && (!Array.isArray(task.deps) || task.deps.some((dep) => typeof dep !== "string"))) {
 			return `Task "${task.id}": "deps" must be an array of task ids`;
+		}
+		if (task.retries !== undefined && (typeof task.retries !== "number" || !Number.isInteger(task.retries) || task.retries < 0)) {
+			return `Task "${task.id}": "retries" must be a non-negative integer`;
 		}
 	}
 	return undefined;
@@ -174,9 +210,9 @@ export function createRouter(team: Team, channel: TeamChannel, bridge: SSEBridge
 				if (!routerOptions.startRun) {
 					return json({ error: "This server does not start runs" }, 404);
 				}
-				let body: { tasks?: unknown };
+				let body: { tasks?: unknown; goal?: unknown; roles?: unknown };
 				try {
-					body = (await request.json()) as { tasks?: unknown };
+					body = (await request.json()) as { tasks?: unknown; goal?: unknown; roles?: unknown };
 				} catch {
 					return json({ error: "Body must be JSON" }, 400);
 				}

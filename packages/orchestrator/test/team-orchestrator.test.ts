@@ -331,6 +331,177 @@ describe("TeamOrchestrator", () => {
 		expect(verify.approvals).toEqual([]);
 	});
 
+	test("chains dependency outputs into dependent prompts", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		dag.add({ id: "b", role: "writer", deps: ["a"] });
+		const { fakes, createHarness } = fixture();
+
+		await new TeamOrchestrator(dag, { session, createHarness }).run();
+
+		expect(dag.get("a")?.output).toBe("did a");
+		expect(fakes.get("b")?.prompts[0]).toBe("b\n\nResults from the tasks this one depends on:\n\n### a (coder)\ndid a");
+	});
+
+	test("a failing node consumes its retries and then succeeds", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder", retries: 2 });
+		let attempts = 0;
+		const { createHarness } = fixture((harness) => {
+			attempts++;
+			if (attempts < 3) {
+				harness.failRun(new Error(`boom ${attempts}`));
+				return;
+			}
+			harness.endRun([assistant("recovered")]);
+		});
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+
+		await new TeamOrchestrator(dag, { session, channel, createHarness, runId: "run-r" }).run();
+
+		expect(attempts).toBe(3);
+		expect(dag.get("a")).toMatchObject({ status: "done", attempts: 2, output: "recovered" });
+		const retried = events.filter((event) => event.type === "task_retried");
+		expect(retried.map((event: any) => [event.attempt, event.error])).toEqual([
+			[1, "boom 1"],
+			[2, "boom 2"],
+		]);
+		expect(events.at(-1)?.type).toBe("dag_complete");
+		const entries = await customEntries(session, "task_retry");
+		expect(entries.map((data) => data.error)).toEqual(["boom 1", "boom 2"]);
+	});
+
+	test("exhausted retries fail the node and escalate via onTaskFailed", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder", retries: 1 });
+		let attempts = 0;
+		const { createHarness } = fixture((harness) => {
+			harness.failRun(new Error(`boom ${++attempts}`));
+		});
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+		const escalations: Array<[string, string]> = [];
+
+		await new TeamOrchestrator(dag, {
+			session,
+			channel,
+			createHarness,
+			onTaskFailed: (node, error) => escalations.push([node.id, error]),
+		}).run();
+
+		expect(attempts).toBe(2);
+		expect(dag.get("a")?.status).toBe("error");
+		expect(escalations).toEqual([["a", "boom 2"]]);
+		expect(events.at(-1)?.type).toBe("dag_failed");
+	});
+
+	test("a GOAL_MET verdict completes the run after one validation pass", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		const { createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+		const contexts: string[] = [];
+
+		await new TeamOrchestrator(dag, {
+			session,
+			channel,
+			createHarness,
+			validator: {
+				goal: "write a haiku",
+				validate: async (context) => {
+					contexts.push(context);
+					return "Looks complete.\nGOAL_MET";
+				},
+			},
+		}).run();
+
+		expect(contexts).toHaveLength(1);
+		expect(contexts[0]).toContain("write a haiku");
+		expect(contexts[0]).toContain("did a");
+		expect(events.at(-1)?.type).toBe("dag_complete");
+		expect(await customEntries(session, "validation_result")).toEqual([
+			{ runId: expect.any(String), round: 1, met: true, reason: undefined, retryTaskId: undefined, ts: expect.any(Number) },
+		]);
+	});
+
+	test("a GOAL_UNMET verdict re-runs the named task before the next pass settles the run", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		const { promptOrder, createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+		let round = 0;
+
+		await new TeamOrchestrator(dag, {
+			session,
+			channel,
+			createHarness,
+			validator: { validate: async () => (++round === 1 ? "GOAL_UNMET: output too short | a" : "GOAL_MET") },
+		}).run();
+
+		expect(round).toBe(2);
+		expect(promptOrder).toEqual(["a", "a"]);
+		expect(dag.get("a")?.status).toBe("done");
+		expect(events.some((event) => event.type === "task_retried" && event.error === "goal validation: output too short")).toBe(true);
+		expect(events.at(-1)?.type).toBe("dag_complete");
+	});
+
+	test("an unmet verdict with no rounds left fails the run", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		const { promptOrder, createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+
+		await new TeamOrchestrator(dag, {
+			session,
+			channel,
+			createHarness,
+			validator: { maxRounds: 1, validate: async () => "GOAL_UNMET: not even close | a" },
+		}).run();
+
+		expect(promptOrder).toEqual(["a"]);
+		expect(events.some((event) => event.type === "team_error" && event.error.includes("not even close"))).toBe(true);
+		expect(events.at(-1)?.type).toBe("dag_failed");
+	});
+
+	test("a throwing validator does not block completion", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		const { createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+
+		await new TeamOrchestrator(dag, {
+			session,
+			channel,
+			createHarness,
+			validator: {
+				validate: async () => {
+					throw new Error("validator down");
+				},
+			},
+		}).run();
+
+		expect(events.some((event) => event.type === "team_error" && event.error.includes("validator down"))).toBe(true);
+		expect(events.at(-1)?.type).toBe("dag_complete");
+	});
+
 	test("run() may only be called once", async () => {
 		const session = await new InMemorySessionRepo().create();
 		const dag = new TaskDag();

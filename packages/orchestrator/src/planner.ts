@@ -16,6 +16,14 @@ const spawnAgentParams = Type.Object({
 			description: "Task id to register this worker under in the team's task DAG, so progress is tracked by task rather than role",
 		}),
 	),
+	deps: Type.Optional(
+		Type.Array(Type.String(), {
+			description: "Ids of tasks that must finish before this agent's task starts; their outputs are passed into its prompt",
+		}),
+	),
+	retries: Type.Optional(
+		Type.Number({ description: "Extra attempts the task gets if its run fails, before the failure is escalated" }),
+	),
 	defaultTools: Type.Optional(
 		Type.Boolean({
 			description: "Give the agent hoocode's built-in coding tools (bash/read/edit/write/grep/find/ls)",
@@ -57,7 +65,7 @@ export function createSpawnAgentTool(team: Team, dag?: TaskDag): AgentTool<typeo
 			};
 			const agent = await team.spawnAsync(config);
 			if (dag && params.taskId && !dag.get(params.taskId)) {
-				dag.add({ id: params.taskId, role: params.role });
+				dag.add({ id: params.taskId, role: params.role, deps: params.deps, retries: params.retries });
 			}
 			if (params.task) {
 				if (dag && params.taskId) {
@@ -116,6 +124,99 @@ export function createDelegateTaskTool(team: Team): AgentTool<typeof delegateTas
 	};
 }
 
+/** One task of a dry-run plan, shaped like a POST /runs task (and tasks.json). */
+export interface PlannedTask {
+	id: string;
+	role: string;
+	prompt?: string;
+	deps?: string[];
+	retries?: number;
+}
+
+/**
+ * What a dry-run planning pass produces: the role configs the planner would
+ * have spawned and the task graph it would have dispatched. Serializable as a
+ * tasks.json that `hooteams run` accepts directly.
+ */
+export interface PlanBuffer {
+	roles: RoleConfig[];
+	tasks: PlannedTask[];
+}
+
+/** A task id not yet used in the buffer, derived from the preferred id. */
+function freeTaskId(buffer: PlanBuffer, preferred: string): string {
+	if (!buffer.tasks.some((task) => task.id === preferred)) return preferred;
+	let n = 2;
+	while (buffer.tasks.some((task) => task.id === `${preferred}-${n}`)) n++;
+	return `${preferred}-${n}`;
+}
+
+/**
+ * Dry-run twin of createSpawnAgentTool: records the role config and task in
+ * the plan buffer instead of spawning anything, so the plan can be inspected
+ * (and approved) before a single agent runs.
+ */
+export function createPlanSpawnAgentTool(buffer: PlanBuffer): AgentTool<typeof spawnAgentParams> {
+	return {
+		name: "spawn_agent",
+		label: "Plan Agent",
+		description:
+			"Record a new team agent in the plan: role, system prompt, model, and optionally its first task. " +
+			"Nothing is spawned — this is a dry run. Give every task a taskId, a concrete task, and deps listing " +
+			"the task ids whose results it needs.",
+		parameters: spawnAgentParams,
+		execute: async (_toolCallId, params) => {
+			if (!buffer.roles.some((role) => role.role === params.role)) {
+				buffer.roles.push({
+					role: params.role,
+					systemPrompt: params.systemPrompt,
+					model: params.model,
+					provider: params.provider,
+					defaultTools: params.defaultTools,
+					mcpConfigPath: params.mcpConfigPath,
+					cwd: params.cwd,
+				});
+			}
+			let taskId: string | undefined;
+			if (params.task || params.taskId) {
+				taskId = freeTaskId(buffer, params.taskId ?? params.role);
+				buffer.tasks.push({ id: taskId, role: params.role, prompt: params.task, deps: params.deps, retries: params.retries });
+			}
+			const note = taskId ? ` with task "${taskId}"` : "";
+			return {
+				content: [{ type: "text", text: `Planned agent "${params.role}" (${params.model})${note}. Nothing was spawned (dry run).` }],
+				details: { role: params.role, model: params.model, taskId, dryRun: true },
+			};
+		},
+	};
+}
+
+/** Dry-run twin of createDelegateTaskTool: appends a task for an already-planned role. */
+export function createPlanDelegateTaskTool(buffer: PlanBuffer): AgentTool<typeof delegateTaskParams> {
+	return {
+		name: "delegate_task",
+		label: "Plan Task",
+		description:
+			"Record an extra task for a role already in the plan. Nothing runs — this is a dry run. " +
+			"Prefer spawn_agent with taskId/deps so the task's dependencies are explicit.",
+		parameters: delegateTaskParams,
+		execute: async (_toolCallId, params) => {
+			if (!buffer.roles.some((role) => role.role === params.role)) {
+				const roles = buffer.roles.map((role) => role.role);
+				throw new Error(
+					`No planned agent for role "${params.role}". Planned roles: ${roles.length > 0 ? roles.join(", ") : "(none — plan one with spawn_agent first)"}`,
+				);
+			}
+			const taskId = freeTaskId(buffer, params.role);
+			buffer.tasks.push({ id: taskId, role: params.role, prompt: params.task });
+			return {
+				content: [{ type: "text", text: `Planned task "${taskId}" for "${params.role}" (dry run).` }],
+				details: { role: params.role, taskId, dryRun: true },
+			};
+		},
+	};
+}
+
 export interface PlannerOptions {
 	team: Team;
 	systemPrompt?: string;
@@ -126,6 +227,12 @@ export interface PlannerOptions {
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	/** Extra tools beyond spawn_agent. */
 	tools?: AgentTool<any>[];
+	/**
+	 * Plan without executing: spawn_agent and delegate_task write to
+	 * `planBuffer` instead of touching the team, so the plan can be inspected
+	 * (and run later via tasks.json / POST /runs) before any agent starts.
+	 */
+	dryRun?: boolean;
 }
 
 const DEFAULT_PLANNER_PROMPT = `You are the planner of a team of AI agents.
@@ -135,6 +242,13 @@ Workers that must touch code or run commands need tools: pass defaultTools: true
 built-in coding tools (bash/read/edit/write/grep/find/ls), cwd to set their working
 directory, and mcpConfigPath to add tools from an mcp.json file.`;
 
+const DRY_RUN_ADDENDUM = `
+
+You are in planning mode: spawn_agent and delegate_task record a plan instead of starting
+agents — nothing executes. Cover the whole goal. Give every agent a taskId, a concrete
+task, and deps listing the task ids whose results it needs; add retries for tasks likely
+to be flaky. When the plan covers the goal, summarize it briefly and stop.`;
+
 export const PLANNER_ROLE = "planner";
 
 /**
@@ -143,19 +257,23 @@ export const PLANNER_ROLE = "planner";
  */
 export class Planner {
 	readonly agent: Agent;
+	/** Where a dryRun planner's plan accumulates; undefined in live mode. */
+	readonly planBuffer?: PlanBuffer;
 
 	constructor(options: PlannerOptions) {
 		const model = options.model ?? getModel("anthropic", "claude-sonnet-4-5");
+		if (options.dryRun) {
+			this.planBuffer = { roles: [], tasks: [] };
+		}
+		const teamTools = this.planBuffer
+			? [createPlanSpawnAgentTool(this.planBuffer), createPlanDelegateTaskTool(this.planBuffer)]
+			: [createSpawnAgentTool(options.team), createDelegateTaskTool(options.team)];
 		this.agent = new Agent({
 			initialState: {
-				systemPrompt: options.systemPrompt ?? DEFAULT_PLANNER_PROMPT,
+				systemPrompt: (options.systemPrompt ?? DEFAULT_PLANNER_PROMPT) + (options.dryRun ? DRY_RUN_ADDENDUM : ""),
 				model,
 				thinkingLevel: options.thinkingLevel ?? "off",
-				tools: [
-					createSpawnAgentTool(options.team),
-					createDelegateTaskTool(options.team),
-					...(options.tools ?? []),
-				],
+				tools: [...teamTools, ...(options.tools ?? [])],
 			},
 			streamFn: options.streamFn,
 			getApiKey: options.getApiKey,

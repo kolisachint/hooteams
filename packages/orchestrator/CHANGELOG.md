@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- Inter-agent result passing: `TaskNode.output` records the final assistant text of a completed node, and the orchestrator appends the outputs of a node's dependencies to its task prompt — results now chain through the dag instead of every task running siloed.
+- Error recovery stack: `TaskNode.retries`/`attempts` and `TaskDag.resetToIdle()` give failed nodes local re-dispatch (persisted as `task_retry` session entries and surfaced as a new additive `task_retried` TeamEvent), and `TeamOrchestratorOptions.onTaskFailed` fires when retries are exhausted so hosts can escalate structurally (e.g. steer the failure summary to a planner agent).
+- Plan-before-execute: `new Planner({ dryRun: true })` swaps `spawn_agent`/`delegate_task` for buffer-mode twins (`createPlanSpawnAgentTool`, `createPlanDelegateTaskTool`) that record a `PlanBuffer` of role configs + tasks instead of spawning anything. `spawn_agent` also gained optional `deps` and `retries` parameters (live mode forwards them to the dag).
+- Goal-completion validation: `TeamOrchestratorOptions.validator` runs a validation pass after the dag completes cleanly — `GOAL_MET` settles the run; `GOAL_UNMET: <reason> | <taskId>` (see `GOAL_UNMET_MARKER`) resets that task to idle and re-runs it, up to `maxRounds` (default 2) passes before an unmet verdict fails the run. `createValidatorAgent()` builds the validate function from a system prompt + model; `VALIDATOR_PROTOCOL` documents the verdict shape; `TeamConfig.validator` carries the prompt in config form.
+- Exports: `extractMessageText()`, `GOAL_UNMET_MARKER`, `RunValidator`, `PlanBuffer`/`PlannedTask`, `TaskRetriedEvent`, `ValidatorAgentOptions`, and a `getModel` re-export from `@kolisachint/hoocode-ai` for hosts picking a planner model.
+
 ## [0.1.11] - 2026-06-12
 
 ## [0.1.10] - 2026-06-12

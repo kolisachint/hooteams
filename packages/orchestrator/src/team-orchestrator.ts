@@ -26,6 +26,20 @@ export interface NodeHandle {
 	sessionId?: string;
 }
 
+/**
+ * Goal-completion validation run once every node settles "done": the
+ * validator sees the goal and each task's output, and its verdict either
+ * settles the run or sends one task back for rework (see GOAL_UNMET_MARKER).
+ */
+export interface RunValidator {
+	/** One validation pass over the goal + task outputs; resolves with the validator's reply text. */
+	validate: (context: string) => Promise<string>;
+	/** The goal the run is judged against, included in the validation context. */
+	goal?: string;
+	/** Max validation passes before an unmet verdict fails the run. Default 2. */
+	maxRounds?: number;
+}
+
 export interface TeamOrchestratorOptions {
 	/**
 	 * Run session owning all orchestrator-level entries (dag snapshots, task
@@ -46,8 +60,20 @@ export interface TeamOrchestratorOptions {
 	/** Max nodes running at once. Paused nodes release their slot. Default 4. */
 	maxConcurrent?: number;
 	runId?: string;
-	/** Text that starts a node's run. Defaults to the node id (parity with Orchestrator). */
+	/**
+	 * Text that starts a node's run. Defaults to the node id (parity with
+	 * Orchestrator). The outputs of the node's completed dependencies are
+	 * appended to this, so results chain through the dag.
+	 */
 	taskPrompt?: (node: TaskNode) => string;
+	/**
+	 * Called when a node fails permanently (its retries are exhausted). Hosts
+	 * use this to escalate structurally, e.g. steering the failure summary to
+	 * a planner agent that can spawn a recovery specialist or re-delegate.
+	 */
+	onTaskFailed?: (node: TaskNode, error: string) => void;
+	/** Goal-completion validation run after the dag completes cleanly. */
+	validator?: RunValidator;
 }
 
 /**
@@ -57,6 +83,24 @@ export interface TeamOrchestratorOptions {
  * chosen option once resume() is called.
  */
 export const APPROVAL_MARKER = /^AWAITING_APPROVAL:\s*(.+?)\s*\|\s*(.+)$/m;
+
+/**
+ * Verdict line a goal validator ends with when the goal was not achieved:
+ * a reason and the id of the task whose work must be redone. Any reply
+ * without this line counts as GOAL_MET.
+ */
+export const GOAL_UNMET_MARKER = /^GOAL_UNMET:\s*(.+?)\s*\|\s*(\S+)\s*$/m;
+
+/** Concatenated text parts of a message ("" when it has none). */
+export function extractMessageText(message: AgentMessage): string {
+	const content = (message as { content?: unknown }).content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((part): part is { type: "text"; text: string } => part?.type === "text" && typeof part.text === "string")
+		.map((part) => part.text)
+		.join("\n");
+}
 
 /** AgentEvent types mirrored onto the channel (harness-own events are not). */
 const MIRRORED_EVENT_TYPES = new Set([
@@ -103,6 +147,11 @@ export class TeamOrchestrator {
 	private readonly maxConcurrent: number;
 	private readonly createHarness: (node: TaskNode) => NodeHandle | Promise<NodeHandle>;
 	private readonly taskPrompt: (node: TaskNode) => string;
+	private readonly onTaskFailed?: (node: TaskNode, error: string) => void;
+	private readonly validator?: RunValidator;
+	private validationRounds = 0;
+	/** True while a validation pass is in flight; blocks settlement. */
+	private validating = false;
 	private readonly active = new Map<string, ActiveNode>();
 	/** Resumed tasks waiting for a free slot, answer text included. */
 	private readonly resumeQueue: { taskId: string; text: string }[] = [];
@@ -123,6 +172,8 @@ export class TeamOrchestrator {
 		this.maxConcurrent = options.maxConcurrent ?? 4;
 		this.createHarness = options.createHarness;
 		this.taskPrompt = options.taskPrompt ?? ((node) => node.id);
+		this.onTaskFailed = options.onTaskFailed;
+		this.validator = options.validator;
 		this.runId = options.runId ?? randomUUID();
 	}
 
@@ -292,8 +343,19 @@ export class TeamOrchestrator {
 		for (const node of this.dag.ready()) {
 			if (this.slotsInUse >= this.maxConcurrent) break;
 			this.slotsInUse++;
-			void this.dispatchNode(node, this.taskPrompt(node));
+			void this.dispatchNode(node, this.composePrompt(node));
 		}
+	}
+
+	/** The node's task prompt plus the outputs of its completed dependencies. */
+	private composePrompt(node: TaskNode): string {
+		const base = this.taskPrompt(node);
+		const sections = node.deps
+			.map((dep) => this.dag.get(dep))
+			.filter((dep): dep is TaskNode => Boolean(dep?.output))
+			.map((dep) => `### ${dep.id} (${dep.role})\n${dep.output}`);
+		if (sections.length === 0) return base;
+		return `${base}\n\nResults from the tasks this one depends on:\n\n${sections.join("\n\n")}`;
 	}
 
 	private async dispatchNode(node: TaskNode, text: string): Promise<void> {
@@ -351,7 +413,7 @@ export class TeamOrchestrator {
 			return;
 		}
 		if (event.type === "message_end" && !active.paused && event.message.role === "assistant") {
-			const match = APPROVAL_MARKER.exec(this.messageText(event.message));
+			const match = APPROVAL_MARKER.exec(extractMessageText(event.message));
 			if (match) {
 				const question = match[1]!.trim();
 				const options = match[2]!
@@ -361,16 +423,6 @@ export class TeamOrchestrator {
 				this.pauseNode(active, question, options);
 			}
 		}
-	}
-
-	private messageText(message: AgentMessage): string {
-		const content = (message as { content?: unknown }).content;
-		if (typeof content === "string") return content;
-		if (!Array.isArray(content)) return "";
-		return content
-			.filter((part): part is { type: "text"; text: string } => part?.type === "text" && typeof part.text === "string")
-			.map((part) => part.text)
-			.join("\n");
 	}
 
 	private pauseNode(active: ActiveNode, question: string, options: string[]): void {
@@ -486,16 +538,29 @@ export class TeamOrchestrator {
 			this.active.delete(taskId);
 		}
 		const node = this.dag.get(taskId);
+		const errorText =
+			opts.error === undefined
+				? failed
+					? this.lastAssistantError(opts.messages) ?? "task failed"
+					: undefined
+				: opts.error instanceof Error
+					? opts.error.message
+					: String(opts.error);
+		if (failed && node && (node.attempts ?? 0) < (node.retries ?? 0)) {
+			this.retryNode(node, active, errorText ?? "task failed", opts.holdsSlot !== false);
+			return;
+		}
 		if (failed) {
 			this.dag.markFailed(taskId);
 		} else {
 			this.dag.markDone(taskId, opts.messages);
+			if (node) node.output = this.lastAssistantText(opts.messages);
 		}
 		this.persist("task_end", {
 			runId: this.runId,
 			taskId,
 			status: failed ? "error" : "done",
-			error: opts.error === undefined ? undefined : opts.error instanceof Error ? opts.error.message : String(opts.error),
+			error: errorText,
 			ts: Date.now(),
 		});
 		this.publish({
@@ -515,6 +580,13 @@ export class TeamOrchestrator {
 				ts: Date.now(),
 			});
 		}
+		if (failed && node && this.onTaskFailed) {
+			try {
+				this.onTaskFailed(node, errorText ?? "task failed");
+			} catch {
+				// Escalation is best-effort; a throwing hook must not block settlement.
+			}
+		}
 		this.snapshotDag();
 		if (opts.holdsSlot !== false) {
 			this.slotsInUse--;
@@ -523,10 +595,57 @@ export class TeamOrchestrator {
 		this.checkSettled();
 	}
 
+	/** Reset a failed node to idle for another attempt; called by settleNode with the active entry already removed. */
+	private retryNode(node: TaskNode, active: ActiveNode | undefined, error: string, holdsSlot: boolean): void {
+		node.attempts = (node.attempts ?? 0) + 1;
+		this.dag.resetToIdle(node.id);
+		this.persist("task_retry", { runId: this.runId, taskId: node.id, attempt: node.attempts, error, ts: Date.now() });
+		this.publish({
+			type: "task_retried",
+			taskId: node.id,
+			role: node.role,
+			agentId: active?.agentId ?? this.runId,
+			attempt: node.attempts,
+			error,
+			ts: Date.now(),
+		});
+		this.snapshotDag();
+		if (holdsSlot) {
+			this.slotsInUse--;
+		}
+		this.fill();
+	}
+
+	/** Text of the last assistant message, or undefined when there is none. */
+	private lastAssistantText(messages?: AgentMessage[]): string | undefined {
+		for (let i = (messages?.length ?? 0) - 1; i >= 0; i--) {
+			const message = messages![i]!;
+			if (message.role === "assistant") {
+				const text = extractMessageText(message);
+				return text.length > 0 ? text : undefined;
+			}
+		}
+		return undefined;
+	}
+
+	private lastAssistantError(messages?: AgentMessage[]): string | undefined {
+		const last = messages?.[messages.length - 1];
+		const errorMessage = last?.role === "assistant" ? (last as { errorMessage?: string }).errorMessage : undefined;
+		return errorMessage || this.lastAssistantText(messages);
+	}
+
 	private checkSettled(): void {
-		if (this.finished || !this.settle || !this.dag.isComplete()) return;
-		this.finished = true;
+		if (this.finished || !this.settle || this.validating || !this.dag.isComplete()) return;
 		const failed = this.dag.all().some((node) => node.status === "error");
+		if (!failed && this.validator && this.validationRounds < (this.validator.maxRounds ?? 2)) {
+			this.runValidation();
+			return;
+		}
+		this.finish(failed);
+	}
+
+	private finish(failed: boolean): void {
+		this.finished = true;
 		this.persist("run_end", { runId: this.runId, status: failed ? "failed" : "complete", ts: Date.now() });
 		this.snapshotDag();
 		this.publish({
@@ -537,6 +656,65 @@ export class TeamOrchestrator {
 			ts: Date.now(),
 		});
 		void this.flush().then(this.settle);
+	}
+
+	private runValidation(): void {
+		this.validating = true;
+		const round = ++this.validationRounds;
+		this.persist("validation_start", { runId: this.runId, round, ts: Date.now() });
+		this.validator!.validate(this.validationContext()).then(
+			(verdict) => this.onVerdict(round, verdict),
+			(err) => {
+				// A broken validator must not hold the run open or fail clean work.
+				this.validating = false;
+				const error = err instanceof Error ? err.message : String(err);
+				this.persist("validation_result", { runId: this.runId, round, met: true, error, ts: Date.now() });
+				this.publish({ type: "team_error", error: `goal validation errored: ${error}`, role: "orchestrator", agentId: this.runId, ts: Date.now() });
+				this.finish(false);
+			},
+		);
+	}
+
+	private onVerdict(round: number, verdict: string): void {
+		this.validating = false;
+		const unmet = GOAL_UNMET_MARKER.exec(verdict);
+		const reason = unmet?.[1]?.trim();
+		const retryTaskId = unmet?.[2]?.trim();
+		this.persist("validation_result", { runId: this.runId, round, met: !unmet, reason, retryTaskId, ts: Date.now() });
+		if (!unmet) {
+			this.finish(false);
+			return;
+		}
+		const node = retryTaskId ? this.dag.get(retryTaskId) : undefined;
+		const roundsLeft = this.validationRounds < (this.validator?.maxRounds ?? 2);
+		if (!node || !roundsLeft) {
+			this.publish({
+				type: "team_error",
+				error: `goal validation: ${reason}${node ? "" : ` (unknown task "${retryTaskId}")`}`,
+				role: "orchestrator",
+				agentId: this.runId,
+				ts: Date.now(),
+			});
+			this.finish(true);
+			return;
+		}
+		// Send the named task back for rework; the dag is open again, so the
+		// run continues and the next completion triggers another validation pass.
+		this.retryNode(node, undefined, `goal validation: ${reason}`, false);
+	}
+
+	/** Goal + every task's output, as the validator's prompt. */
+	private validationContext(): string {
+		const goal = this.validator?.goal;
+		const sections = this.dag
+			.all()
+			.map((node) => `### ${node.id} (${node.role}) — ${node.status}\n${node.output ?? "(no output recorded)"}`);
+		return [
+			goal ? `The team's goal:\n${goal}` : "No explicit goal was recorded for this run; judge against the tasks themselves.",
+			"Every task has completed. Task outputs:",
+			sections.join("\n\n"),
+			'Did the team actually achieve the goal? End your reply with exactly one line:\nGOAL_MET\nor\nGOAL_UNMET: <reason> | <id of the task to re-run>',
+		].join("\n\n");
 	}
 
 	private snapshotDag(): void {

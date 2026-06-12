@@ -305,6 +305,51 @@ describe("per-role tools", () => {
 		expect(JSON.stringify(coder!.state.messages)).toContain("write a haiku about coding");
 	});
 
+	test("a dryRun planner buffers the plan instead of spawning agents", async () => {
+		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel, streamFn: textStreamFn() });
+		const { Planner } = await import("../src/planner.js");
+		const planner = new Planner({ team, dryRun: true });
+		expect(planner.planBuffer).toEqual({ roles: [], tasks: [] });
+
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		const first = await spawnTool.execute("call-1", {
+			role: "coder",
+			systemPrompt: "write code",
+			model: "fake-model",
+			task: "implement it",
+			taskId: "t-code",
+			retries: 1,
+		} as any);
+		await spawnTool.execute("call-2", {
+			role: "tester",
+			systemPrompt: "test code",
+			model: "fake-model",
+			task: "test it",
+			taskId: "t-test",
+			deps: ["t-code"],
+		} as any);
+
+		// nothing was spawned and nothing ran
+		expect(team.roles()).toEqual([]);
+		expect(JSON.stringify(first.content)).toContain("dry run");
+		expect(planner.planBuffer!.roles.map((role) => role.role)).toEqual(["coder", "tester"]);
+		expect(planner.planBuffer!.tasks).toEqual([
+			{ id: "t-code", role: "coder", prompt: "implement it", deps: undefined, retries: 1 },
+			{ id: "t-test", role: "tester", prompt: "test it", deps: ["t-code"], retries: undefined },
+		]);
+
+		// a clashing taskId gets a fresh id instead of overwriting
+		await spawnTool.execute("call-3", { role: "coder", systemPrompt: "write code", model: "fake-model", task: "more", taskId: "t-code" } as any);
+		expect(planner.planBuffer!.tasks.at(-1)?.id).toBe("t-code-2");
+		expect(planner.planBuffer!.roles.map((role) => role.role)).toEqual(["coder", "tester"]);
+
+		// delegate_task plans a task for an existing role and rejects unknown ones
+		const delegateTool = planner.agent.state.tools.find((tool) => tool.name === "delegate_task")!;
+		await delegateTool.execute("call-4", { role: "tester", task: "re-test it" } as any);
+		expect(planner.planBuffer!.tasks.at(-1)).toMatchObject({ id: "tester", role: "tester", prompt: "re-test it" });
+		expect(delegateTool.execute("call-5", { role: "ghost", task: "anything" } as any)).rejects.toThrow(/No planned agent/);
+	});
+
 	test("agents spawned with team parameter get delegate_task tool", async () => {
 		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel, streamFn: textStreamFn() });
 		const { createNodeHarnessFactory } = await import("../src/node-harness.js");

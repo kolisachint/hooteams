@@ -121,6 +121,31 @@ describe("paused nodes", () => {
 	});
 });
 
+describe("retries and rework", () => {
+	test("add() records the retry budget on the node", () => {
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "x", retries: 2 });
+		expect(dag.get("a")?.retries).toBe(2);
+	});
+
+	test("resetToIdle re-arms a settled node, clearing results and output but not attempts", () => {
+		const dag = diamond();
+		dag.markDone("plan", [{ role: "user", content: "done", timestamp: 1 } as any]);
+		const plan = dag.get("plan")!;
+		plan.output = "the plan";
+		plan.attempts = 1;
+
+		const node = dag.resetToIdle("plan");
+
+		expect(node.status).toBe("idle");
+		expect(node.results).toBeUndefined();
+		expect(node.output).toBeUndefined();
+		expect(node.attempts).toBe(1);
+		expect(dag.ready().map((other) => other.id)).toEqual(["plan"]);
+		expect(dag.isComplete()).toBe(false);
+	});
+});
+
 describe("persistence", () => {
 	test("toJSON/fromJSON round-trips nodes, statuses, and results", () => {
 		const dag = diamond();

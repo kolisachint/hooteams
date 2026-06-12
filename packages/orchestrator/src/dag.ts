@@ -4,6 +4,8 @@ export interface TaskNodeInput {
 	id: string;
 	role: string;
 	deps?: string[];
+	/** Extra dispatch attempts the node gets after a failed run. Default 0. */
+	retries?: number;
 }
 
 /**
@@ -18,7 +20,7 @@ export class TaskDag {
 		if (this.nodes.has(input.id)) {
 			throw new Error(`Task "${input.id}" already exists`);
 		}
-		const node: TaskNode = { id: input.id, role: input.role, deps: input.deps?.slice() ?? [], status: "idle" };
+		const node: TaskNode = { id: input.id, role: input.role, deps: input.deps?.slice() ?? [], status: "idle", retries: input.retries };
 		this.nodes.set(input.id, node);
 		return node;
 	}
@@ -103,6 +105,19 @@ export class TaskDag {
 	 */
 	markPaused(id: string): void {
 		this.require(id).status = "paused";
+	}
+
+	/**
+	 * Send a settled node back to "idle" so ready() re-dispatches it, clearing
+	 * the previous attempt's results and output (but not its attempt count).
+	 * Used for retries and validator-triggered reruns.
+	 */
+	resetToIdle(id: string): TaskNode {
+		const node = this.require(id);
+		node.status = "idle";
+		node.results = undefined;
+		node.output = undefined;
+		return node;
 	}
 
 	/** Nodes that can never run because a transitive dependency failed. */

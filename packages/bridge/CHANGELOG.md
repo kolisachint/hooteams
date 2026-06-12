@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- `POST /runs` accepts three new optional fields (all backward compatible): `retries` per task (non-negative integer, validated), a run-level `goal` string (judged by the host's goal validator when one is configured), and `roles` — per-run role configs (e.g. from a `hooteams plan` dry run) the host merges into its team for that run.
+- The new additive `task_retried` TeamEvent passes through the serializer unchanged, like the other synthetic task events.
+
 ## [0.1.11] - 2026-06-12
 
 ## [0.1.10] - 2026-06-12

@@ -39,6 +39,7 @@ hooteams — multi-agent orchestration for hoocode
 
 Usage:
   hooteams start  [--config path] [--port 4242] [--resume]  start the team server
+  hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
   hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
   hooteams pending [--host …]                               list approval gates awaiting an answer
   hooteams resume <taskId> "<option>" [--feedback "…"]      answer an approval gate
@@ -48,6 +49,24 @@ Usage:
   hooteams stop   [--host …]                                stop the server gracefully
   hooteams help                                             show usage
 ```
+
+### `hooteams plan`
+
+Run the planner in dry-run mode against a goal: its `spawn_agent` / `delegate_task` calls record a plan instead of starting agents, so the task graph can be inspected (and edited) before anything executes.
+
+```bash
+hooteams plan "ship a haiku about software" --out tasks.json
+# review tasks.json, then:
+hooteams run tasks.json
+```
+
+The output file carries `goal`, `roles`, and `tasks`, and `hooteams run` accepts it directly — the server merges the plan's roles into the configured team for that run, and the goal feeds the goal validator (when one is configured). No server needs to be running to plan; credentials resolve the same way as for the server (see Authentication).
+
+| Flag         | Default              | Description                                  |
+|--------------|----------------------|----------------------------------------------|
+| `--out`      | print to stdout      | Write the plan to this file                  |
+| `--model`    | `claude-sonnet-4-5`  | Planner model id                             |
+| `--provider` | `anthropic`          | Planner model provider                       |
 
 ### `hooteams start`
 
@@ -87,9 +106,12 @@ The file holds the task graph (a bare task array works too):
 | Task field | Required | Description                                            |
 |------------|----------|--------------------------------------------------------|
 | `id`       | ✓        | Unique task id                                         |
-| `role`     | ✓        | Role from the server config that executes this task    |
+| `role`     | ✓        | Role from the server config (or the file's `roles`) that executes this task |
 | `prompt`   |          | Text that starts the task's run (default: the task id) |
-| `deps`     |          | Task ids that must be `done` before this one starts    |
+| `deps`     |          | Task ids that must be `done` before this one starts. Their final outputs are appended to this task's prompt, so results chain through the graph |
+| `retries`  |          | Extra attempts the task gets after a failed run (default: `0`). When retries are exhausted, the failure is steered to the `planner` agent (if one is configured) for structural recovery |
+
+Top-level file fields besides `tasks`: `goal` (what the run pursues — judged by the goal validator when one is configured) and `roles` (per-run role configs merged into the team, e.g. from `hooteams plan`).
 
 Each task runs on a fresh agent with its own persisted session under `~/.hooteams/sessions`, with the human-in-the-loop protocol appended to its system prompt: an agent that needs a human decision ends its reply with `AWAITING_APPROVAL: <question> | <option1>, <option2>` and the task pauses (releasing its concurrency slot) until someone answers — from this CLI, `hoocode --team`, or hoocanvas. First answer wins.
 
@@ -225,7 +247,14 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
   "sessionsRoot": "~/.hooteams/sessions",
 
   // Restore and continue an interrupted run on startup (default: false; also --resume)
-  "resumeInterrupted": false
+  "resumeInterrupted": false,
+
+  // System prompt for a goal-completion validator (optional). When set, every
+  // run that completes cleanly is reviewed by a validator agent (running on
+  // defaults.model or the first role's model): it sees the run's goal and every
+  // task's output and replies GOAL_MET, or "GOAL_UNMET: <reason> | <taskId>"
+  // to send that task back for rework before the run settles.
+  "validator": "You are a strict reviewer. Judge whether the team's outputs achieve the goal."
 }
 ```
 
@@ -327,7 +356,7 @@ The server exposes an HTTP API that any client (CLI, hoocanvas, curl) can use.
 | `/events`               | GET    | SSE stream of all agents (replay + live)                               |
 | `/events/:role`         | GET    | SSE stream of one agent; `?replay=N` limits replayed history           |
 | `/steer`                | POST   | `{ "role": "coder", "message": "…" }` — queue a mid-run steering message |
-| `/runs`                 | POST   | `{ "tasks": [{ id, role, prompt?, deps? }] }` → `202 { runId }`; `409` while a run is active; `400` on unknown roles or cyclic deps |
+| `/runs`                 | POST   | `{ "tasks": [{ id, role, prompt?, deps?, retries? }], "goal"?, "roles"? }` → `202 { runId }`; `409` while a run is active; `400` on unknown roles or cyclic deps |
 | `/tasks/pending`        | GET    | `{ runId, pending: [{ taskId, question, options }] }` — open approval gates |
 | `/tasks/:taskId/resume` | POST   | `{ "option": "yes", "feedback": "…" }` — answer a gate; `409` if another surface answered first |
 | `/trace`                | GET    | Audit trail of the active run (tasks, timings, approvals)              |
@@ -389,11 +418,14 @@ The planner agent has a built-in `spawn_agent` tool that lets it grow the team d
 | `model`         | `string`  | ✓        | Model id (e.g. `claude-sonnet-4-5`)                       |
 | `provider`      | `string`  |          | Model provider (default: `anthropic`)                           |
 | `task`          | `string`  |          | If given, immediately prompt the new agent with this task       |
+| `taskId`        | `string`  |          | Register the task under this id in the team's task DAG          |
+| `deps`          | `string[]`|          | Task ids whose results this agent's task needs                  |
+| `retries`       | `number`  |          | Extra attempts the task gets if its run fails                   |
 | `defaultTools`  | `boolean` |          | Give the agent built-in coding tools                            |
 | `mcpConfigPath` | `string`  |          | Path to `mcp.json` for MCP server tools                        |
 | `cwd`           | `string`  |          | Working directory for the agent's tools                         |
 
-This means you can start with just a planner and let it assemble the right team for the goal.
+This means you can start with just a planner and let it assemble the right team for the goal. In dry-run mode (`hooteams plan`, or `new Planner({ dryRun: true })`) the same tools write to a plan buffer instead, producing an inspectable task graph without executing anything.
 
 ---
 
