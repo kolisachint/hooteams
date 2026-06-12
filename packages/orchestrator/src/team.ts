@@ -111,16 +111,28 @@ export class Team {
 			throw new Error(`No agent for role "${role}"`);
 		}
 		const message = { role: "user" as const, content: [{ type: "text" as const, text }], timestamp: Date.now() };
+		const reportFailure = (err: unknown) => this.publishError(member, err);
 		if (member.agent.state.isStreaming) {
 			member.agent.steer(message);
 			return;
 		}
 		if (member.agent.state.messages.length === 0) {
-			void member.agent.prompt(message).catch(() => {});
+			void member.agent.prompt(message).catch(reportFailure);
 			return;
 		}
 		member.agent.steer(message);
-		void member.agent.continue().catch(() => {});
+		void member.agent.continue().catch(reportFailure);
+	}
+
+	/** Surface a failed steer/prompt as a "team_error" event instead of dropping it. */
+	private publishError(member: TeamMember, err: unknown): void {
+		this.channel.publish({
+			type: "team_error",
+			error: err instanceof Error ? err.message : String(err),
+			role: member.role,
+			agentId: member.agentId,
+			ts: Date.now(),
+		});
 	}
 
 	/** Abort the agent's run and remove it from the team. */
@@ -178,6 +190,9 @@ export class Team {
 				if (member.status !== "error") {
 					member.status = "done";
 				}
+				break;
+			case "team_error":
+				member.status = "error";
 				break;
 		}
 	}

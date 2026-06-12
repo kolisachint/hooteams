@@ -4,7 +4,8 @@ export { REPLAY_BUFFER_SIZE, TeamChannel } from "./channel.js";
 export type { Subscribable, TeamEventListener } from "./channel.js";
 export { TaskDag } from "./dag.js";
 export type { TaskNodeInput } from "./dag.js";
-export { createSpawnAgentTool, Planner, PLANNER_ROLE } from "./planner.js";
+export { Orchestrator } from "./orchestrator.js";
+export { createDelegateTaskTool, createSpawnAgentTool, Planner, PLANNER_ROLE } from "./planner.js";
 export type { PlannerOptions } from "./planner.js";
 export { Team } from "./team.js";
 export type { TeamOptions } from "./team.js";
@@ -15,6 +16,7 @@ export type {
 	RoleConfig,
 	TaskNode,
 	TeamConfig,
+	TeamErrorEvent,
 	TeamEvent,
 	ThinkingLevel,
 } from "./types.js";

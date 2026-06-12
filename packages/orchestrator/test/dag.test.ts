@@ -82,3 +82,27 @@ describe("markDone propagation", () => {
 		expect(dag.isComplete()).toBe(true);
 	});
 });
+
+describe("persistence", () => {
+	test("toJSON/fromJSON round-trips nodes, statuses, and results", () => {
+		const dag = diamond();
+		dag.markDone("plan", [{ role: "user", content: [{ type: "text", text: "done" }], timestamp: 1 } as any]);
+		dag.markRunning("code");
+
+		const restored = TaskDag.fromJSON(JSON.parse(JSON.stringify(dag.toJSON())));
+
+		expect(restored.all()).toEqual(dag.all());
+		expect(restored.get("plan")?.results).toEqual(dag.get("plan")?.results);
+		// derived state survives the round trip: code is running, docs is ready
+		expect(restored.ready().map((node) => node.id)).toEqual(["docs"]);
+	});
+
+	test("the restored dag is independent of the source", () => {
+		const dag = diamond();
+		const restored = TaskDag.fromJSON(dag.toJSON());
+		restored.markDone("plan");
+		expect(restored.get("plan")?.status).toBe("done");
+		expect(dag.get("plan")?.status).toBe("idle");
+	});
+
+});
