@@ -1,6 +1,7 @@
 import { Agent, type AgentTool, type StreamFn } from "@kolisachint/hoocode-agent-core";
 import { getModel, type Model, Type } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
+import type { TaskDag } from "./dag.js";
 import type { Team } from "./team.js";
 import type { RoleConfig, ThinkingLevel } from "./types.js";
 
@@ -10,6 +11,11 @@ const spawnAgentParams = Type.Object({
 	model: Type.String({ description: "Model id the agent should use, e.g. claude-sonnet-4-5" }),
 	provider: Type.Optional(Type.String({ description: "Model provider, defaults to anthropic" })),
 	task: Type.Optional(Type.String({ description: "If given, immediately prompt the new agent with this task" })),
+	taskId: Type.Optional(
+		Type.String({
+			description: "Task id to register this worker under in the team's task DAG, so progress is tracked by task rather than role",
+		}),
+	),
 	defaultTools: Type.Optional(
 		Type.Boolean({
 			description: "Give the agent hoocode's built-in coding tools (bash/read/edit/write/grep/find/ls)",
@@ -25,8 +31,10 @@ const spawnAgentParams = Type.Object({
  * Tool handed to the planner agent so it can grow the team itself.
  * Spawning awaits tool assembly (MCP servers included); an optional initial
  * task runs detached so the planner keeps reasoning while the worker starts.
+ * When a dag is supplied, a taskId param registers the worker's task in it so
+ * the orchestrator tracks the worker by task id, not just role.
  */
-export function createSpawnAgentTool(team: Team): AgentTool<typeof spawnAgentParams> {
+export function createSpawnAgentTool(team: Team, dag?: TaskDag): AgentTool<typeof spawnAgentParams> {
 	return {
 		name: "spawn_agent",
 		label: "Spawn Agent",
@@ -34,7 +42,8 @@ export function createSpawnAgentTool(team: Team): AgentTool<typeof spawnAgentPar
 			"Spawn a new team agent with the given role, system prompt, and model. " +
 			"Set defaultTools to equip it with the built-in coding tools, mcpConfigPath to add MCP server tools, " +
 			"and cwd to pick its working directory. " +
-			"Optionally give it an initial task to start working on immediately.",
+			"Optionally give it an initial task to start working on immediately, " +
+			"and a taskId to register that task in the team's task DAG.",
 		parameters: spawnAgentParams,
 		execute: async (_toolCallId, params) => {
 			const config: RoleConfig = {
@@ -47,7 +56,13 @@ export function createSpawnAgentTool(team: Team): AgentTool<typeof spawnAgentPar
 				cwd: params.cwd,
 			};
 			const agent = await team.spawnAsync(config);
+			if (dag && params.taskId && !dag.get(params.taskId)) {
+				dag.add({ id: params.taskId, role: params.role });
+			}
 			if (params.task) {
+				if (dag && params.taskId) {
+					dag.markRunning(params.taskId);
+				}
 				void agent.prompt(params.task).catch(() => {});
 			}
 			const toolCount = agent.state.tools.length;
@@ -55,7 +70,47 @@ export function createSpawnAgentTool(team: Team): AgentTool<typeof spawnAgentPar
 			const note = params.task ? ` and started on its first task` : "";
 			return {
 				content: [{ type: "text", text: `Spawned agent "${params.role}" (${params.model})${toolNote}${note}.` }],
-				details: { role: params.role, model: params.model, tools: toolCount, started: Boolean(params.task) },
+				details: {
+					role: params.role,
+					model: params.model,
+					tools: toolCount,
+					started: Boolean(params.task),
+					taskId: params.taskId,
+				},
+			};
+		},
+	};
+}
+
+const delegateTaskParams = Type.Object({
+	role: Type.String({ description: "Role of the existing team member to hand the task to" }),
+	task: Type.String({ description: "The task or instruction to send to that agent" }),
+});
+
+/**
+ * Tool that lets any agent hand off a subtask to a named team member.
+ * Delegation is fire-and-forget: the task is steered into the target agent
+ * (starting a run if it is idle) and the caller keeps working.
+ */
+export function createDelegateTaskTool(team: Team): AgentTool<typeof delegateTaskParams> {
+	return {
+		name: "delegate_task",
+		label: "Delegate Task",
+		description:
+			"Hand off a task to an existing team member by role. Mid-run the task is queued as a " +
+			"steering message; an idle agent starts a new run on it.",
+		parameters: delegateTaskParams,
+		execute: async (_toolCallId, params) => {
+			if (!team.has(params.role)) {
+				const roles = team.roles();
+				throw new Error(
+					`No agent for role "${params.role}". Available roles: ${roles.length > 0 ? roles.join(", ") : "(none — spawn one first)"}`,
+				);
+			}
+			team.steer(params.role, params.task);
+			return {
+				content: [{ type: "text", text: `Delegated task to "${params.role}".` }],
+				details: { role: params.role },
 			};
 		},
 	};

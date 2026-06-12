@@ -1,14 +1,29 @@
 import type { AgentEvent, AgentMessage, AgentTool, ThinkingLevel } from "@kolisachint/hoocode-agent-core";
 
 /**
- * The single wire format every consumer (bridge, canvas, CLI attach) sees:
- * a hoocode AgentEvent tagged with which team member produced it.
+ * Synthetic event published by the Team when starting or resuming an agent's
+ * run fails outside the run itself (where no AgentEvent would ever surface it).
  */
-export type TeamEvent = AgentEvent & {
+export interface TeamErrorEvent {
+	type: "team_error";
+	error: string;
 	role: string;
 	agentId: string;
 	ts: number;
-};
+}
+
+/**
+ * The single wire format every consumer (bridge, canvas, CLI attach) sees:
+ * a hoocode AgentEvent tagged with which team member produced it, plus
+ * team-level synthetic events like "team_error".
+ */
+export type TeamEvent =
+	| (AgentEvent & {
+			role: string;
+			agentId: string;
+			ts: number;
+	  })
+	| TeamErrorEvent;
 
 /** Coarse per-agent status derived from the event stream. */
 export type AgentStatus = "idle" | "thinking" | "streaming" | "tool" | "done" | "error";

@@ -7,7 +7,8 @@ import { closeMcpTools, type StreamFn } from "@kolisachint/hoocode-agent-core";
 import { type AssistantMessage, type AssistantMessageEvent, type AssistantMessageEventStream } from "@kolisachint/hoocode-ai";
 import { EventStream } from "@kolisachint/hoocode-ai";
 import { TeamChannel } from "../src/channel.js";
-import { createSpawnAgentTool } from "../src/planner.js";
+import { TaskDag } from "../src/dag.js";
+import { createDelegateTaskTool, createSpawnAgentTool } from "../src/planner.js";
 import { Team } from "../src/team.js";
 
 const STUB_MCP_SERVER = join(dirname(fileURLToPath(import.meta.url)), "stub-mcp-server.mjs");
@@ -59,6 +60,17 @@ function createAssistantMessage(content: AssistantMessage["content"], stopReason
 		},
 		stopReason: stopReason as AssistantMessage["stopReason"],
 		timestamp: Date.now(),
+	};
+}
+
+/** Every run finishes immediately with a one-line text message. */
+function textStreamFn(): StreamFn {
+	return () => {
+		const stream = createAssistantMessageStream();
+		queueMicrotask(() => {
+			stream.push({ type: "done", reason: "stop", message: createAssistantMessage([{ type: "text", text: "ok" }]) });
+		});
+		return stream;
 	};
 }
 
@@ -191,5 +203,49 @@ describe("per-role tools", () => {
 		const names = agent!.state.tools.map((tool) => tool.name);
 		expect(names).toContain("bash");
 		expect(JSON.stringify(result.content)).toContain("7 tools");
+	});
+
+	test("spawn_agent registers the worker's task in the dag when taskId is given", async () => {
+		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel, streamFn: textStreamFn() });
+		const dag = new TaskDag();
+		const spawnTool = createSpawnAgentTool(team, dag);
+
+		const result = await spawnTool.execute("call-1", {
+			role: "builder",
+			systemPrompt: "build things",
+			model: "fake-model",
+			taskId: "t-build",
+		} as any);
+
+		expect(dag.get("t-build")?.role).toBe("builder");
+		// no initial task, so the node stays dispatchable
+		expect(dag.get("t-build")?.status).toBe("idle");
+		expect((result.details as any).taskId).toBe("t-build");
+
+		// with an initial task, the node is marked running so an orchestrator won't double-dispatch
+		await spawnTool.execute("call-2", {
+			role: "tester",
+			systemPrompt: "test things",
+			model: "fake-model",
+			task: "run the tests",
+			taskId: "t-test",
+		} as any);
+		expect(dag.get("t-test")?.status).not.toBe("idle");
+		await team.get("tester")!.waitForIdle();
+	});
+
+	test("delegate_task steers the named agent and rejects unknown roles", async () => {
+		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel, streamFn: textStreamFn() });
+		const agent = team.spawn({ role: "coder", systemPrompt: "code", model: "fake-model" });
+		const delegateTool = createDelegateTaskTool(team);
+
+		const result = await delegateTool.execute("call-1", { role: "coder", task: "fix the bug" } as any);
+		expect(JSON.stringify(result.content)).toContain("coder");
+		await agent.waitForIdle();
+		expect(JSON.stringify(agent.state.messages)).toContain("fix the bug");
+
+		expect(delegateTool.execute("call-2", { role: "ghost", task: "anything" } as any)).rejects.toThrow(
+			/No agent for role "ghost".*coder/,
+		);
 	});
 });

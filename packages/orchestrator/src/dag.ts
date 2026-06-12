@@ -120,6 +120,27 @@ export class TaskDag {
 		);
 	}
 
+	/**
+	 * Plain-object snapshot of the graph keyed by node id, safe to
+	 * JSON.stringify. The caller decides where to persist it.
+	 */
+	toJSON(): Record<string, TaskNode> {
+		const snapshot: Record<string, TaskNode> = {};
+		for (const [id, node] of this.nodes) {
+			snapshot[id] = { ...node, deps: node.deps.slice() };
+		}
+		return snapshot;
+	}
+
+	/** Rebuild a dag from a toJSON() snapshot, preserving statuses and results. */
+	static fromJSON(snapshot: Record<string, TaskNode>): TaskDag {
+		const dag = new TaskDag();
+		for (const node of Object.values(snapshot)) {
+			dag.nodes.set(node.id, { ...node, deps: node.deps?.slice() ?? [] });
+		}
+		return dag;
+	}
+
 	private require(id: string): TaskNode {
 		const node = this.nodes.get(id);
 		if (!node) {
