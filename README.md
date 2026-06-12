@@ -249,6 +249,18 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
   // Restore and continue an interrupted run on startup (default: false; also --resume)
   "resumeInterrupted": false,
 
+  // Cross-run shared team memory (default: true). Task outputs are recorded to a
+  // project-scoped store at run end, new runs bootstrap from prior ones, and every
+  // agent gets the memory_read/memory_write tools. Set false to disable.
+  "memory": true,
+
+  // Root directory for the per-project memory stores (default: ~/.hooteams/memory)
+  "memoryRoot": "~/.hooteams/memory",
+
+  // Project the memory store is scoped to (default: derived from the server's cwd,
+  // so reruns from the same directory share memory)
+  "project": "my-app",
+
   // System prompt for a goal-completion validator (optional). When set, every
   // run that completes cleanly is reviewed by a validator agent (running on
   // defaults.model or the first role's model): it sees the run's goal and every
@@ -426,6 +438,44 @@ The planner agent has a built-in `spawn_agent` tool that lets it grow the team d
 | `cwd`           | `string`  |          | Working directory for the agent's tools                         |
 
 This means you can start with just a planner and let it assemble the right team for the goal. In dry-run mode (`hooteams plan`, or `new Planner({ dryRun: true })`) the same tools write to a plan buffer instead, producing an inspectable task graph without executing anything.
+
+---
+
+## Inter-agent messaging
+
+Agents collaborate through two tools with different blocking semantics:
+
+| Tool            | Pattern            | Behavior                                                                 |
+|-----------------|--------------------|--------------------------------------------------------------------------|
+| `delegate_task` | fire-and-forget    | Steers the task into the target agent and returns immediately            |
+| `ask_agent`     | request-response   | Steers the question into the target agent and **blocks** until the target's next completed run, returning its final reply text |
+
+`ask_agent(role, question, timeoutSeconds?)` enables genuinely collaborative reasoning — e.g. a `coder` asking a `security-auditor` "is this approach safe?" mid-task and having the answer in hand before continuing. Asking your own role is rejected (the answer could never arrive while the asking run blocks), unknown roles fail with the available roles listed, and the wait is bounded by `timeoutSeconds` (default 120).
+
+Both tools are available to the live planner, to every task-run agent (the `TeamOrchestrator` node harnesses), and to config-spawned team members. Embedders can call the underlying promise directly: `askAgent(team, role, question, timeoutMs)` from `@kolisachint/hooteams-orchestrator`.
+
+---
+
+## Shared team memory
+
+`TeamMemory` is a knowledge store scoped to a **project, not a run**: one JSON file per project under `~/.hooteams/memory`, shared by every agent and surviving across runs. It is on by default (disable with `"memory": false` in the config) and closes the loop in three places:
+
+1. **Agents read and write it via tools.** Every agent gets `memory_read(query)` (token search over keys, values, and tags, recency-ranked) and `memory_write(key, value, tags?)`. Entries are stamped with the writing run/role for provenance.
+2. **Task outputs are auto-recorded at run end.** When a run settles, the orchestrator writes each completed task's final output under `run/<runId>/<taskId>`, tagged with the role and status — no agent cooperation required.
+3. **New runs bootstrap from prior runs.** The most recent entries are injected into the prompts of a run's root tasks (tasks with no dependencies), so a team that runs twice on the same project starts the second run knowing what the first one learned.
+
+This is what makes a team that learns across goals instead of executing one-shot: decisions, conventions, and results persist in `~/.hooteams/memory/<project>.json` (configurable via `memoryRoot`/`project`), with writes serialized and saved atomically so concurrent agents never corrupt the store.
+
+Programmatic use:
+
+```ts
+import { TeamMemory, createMemoryReadTool, createMemoryWriteTool } from "@kolisachint/hooteams-orchestrator";
+
+const memory = new TeamMemory({ project: "my-app" });
+await memory.write("auth/approach", "JWT with refresh rotation", { tags: ["auth", "decision"] });
+const matches = await memory.read("auth");
+const context = await memory.bootstrapContext(); // digest for a new run's prompts
+```
 
 ---
 
