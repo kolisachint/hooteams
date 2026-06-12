@@ -31,6 +31,98 @@ export async function status(host: string): Promise<void> {
 	}
 }
 
+/**
+ * POST a task graph to /runs and follow its lifecycle on /events until the
+ * dag settles. The file holds { tasks: [{ id, role, prompt?, deps? }] } (a
+ * bare task array is accepted too). Detaching leaves the run going.
+ */
+export async function run(host: string, file: string, follow: boolean): Promise<void> {
+	const parsed = JSON.parse(await Bun.file(file).text()) as unknown;
+	const body = Array.isArray(parsed) ? { tasks: parsed } : parsed;
+	const response = await fetch(`${host}/runs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	});
+	if (!response.ok) {
+		const error = (await response.json().catch(() => ({}))) as { error?: string };
+		throw new Error(error.error ?? `HTTP ${response.status}`);
+	}
+	const { runId } = (await response.json()) as { runId: string };
+	console.log(`run started: ${runId}`);
+	if (!follow) return;
+	console.log("following the run — ctrl-c detaches (the run keeps going)\n");
+
+	let failed = false;
+	const controller = new AbortController();
+	await consumeSSE(
+		`${host}/events?replay=50`,
+		(event) => {
+			switch (event.type) {
+				case "task_started":
+					console.log(`▶ ${event.taskId} (${event.role})`);
+					break;
+				case "task_paused":
+					console.log(`⏸ ${event.taskId} needs input: ${event.question}`);
+					console.log(`   options: ${(event.options ?? []).join(", ")}`);
+					console.log(`   answer with: hooteams resume ${event.taskId} "<option>"`);
+					break;
+				case "task_resumed":
+					console.log(`▶ ${event.taskId} resumed with "${event.chosenOption}"`);
+					break;
+				case "task_finished":
+					console.log(`${event.status === "done" ? "✓" : "✗"} ${event.taskId} ${event.status}`);
+					break;
+				case "dag_complete":
+				case "dag_failed":
+					if (event.runId !== runId) break;
+					failed = event.type === "dag_failed";
+					console.log(`\nrun ${failed ? "failed" : "complete"}: ${runId}`);
+					controller.abort();
+					break;
+			}
+		},
+		controller.signal,
+	);
+	if (failed) process.exit(1);
+}
+
+/** List the active run's unanswered approval gates. */
+export async function pending(host: string): Promise<void> {
+	const response = await fetch(`${host}/tasks/pending`);
+	if (response.status === 404) {
+		console.log("no active run");
+		return;
+	}
+	if (!response.ok) throw new Error(`HTTP ${response.status}`);
+	const data = (await response.json()) as {
+		runId: string;
+		pending: Array<{ taskId: string; question: string; options: string[] }>;
+	};
+	if (data.pending.length === 0) {
+		console.log(`run ${data.runId}: no pending approvals`);
+		return;
+	}
+	for (const gate of data.pending) {
+		console.log(`${gate.taskId}: ${gate.question}`);
+		console.log(`  options: ${gate.options.join(", ")}`);
+	}
+}
+
+/** Answer a paused task's approval gate. */
+export async function resume(host: string, taskId: string, option: string, feedback?: string): Promise<void> {
+	const response = await fetch(`${host}/tasks/${encodeURIComponent(taskId)}/resume`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ option, feedback }),
+	});
+	if (!response.ok) {
+		const error = (await response.json().catch(() => ({}))) as { error?: string };
+		throw new Error(error.error ?? `HTTP ${response.status}`);
+	}
+	console.log(`resumed ${taskId} with "${option}" ✓`);
+}
+
 export async function stop(host: string): Promise<void> {
 	const response = await fetch(`${host}/stop`, { method: "POST" });
 	if (!response.ok) throw new Error(`HTTP ${response.status}`);

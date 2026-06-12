@@ -5,7 +5,7 @@ import {
 	Team,
 	TeamChannel,
 } from "@kolisachint/hooteams-orchestrator";
-import { createRouter } from "../src/router.js";
+import { createRouter, RunRejectedError, type StartRunRequest } from "../src/router.js";
 import { SSEBridge } from "../src/sse.js";
 
 class FakeAgent implements Subscribable {
@@ -68,11 +68,11 @@ afterEach(() => {
 	server = undefined;
 });
 
-function startServer() {
+function startServer(routerOptions?: Parameters<typeof createRouter>[3]) {
 	const channel = new TeamChannel();
 	const team = new Team(channel, { resolveModel: () => fakeModel });
 	const bridge = new SSEBridge(channel);
-	const router = createRouter(team, channel, bridge);
+	const router = createRouter(team, channel, bridge, routerOptions);
 	server = Bun.serve({ port: 0, fetch: (request) => router.fetch(request) });
 	const base = `http://localhost:${server.port}`;
 	return { channel, team, bridge, base };
@@ -187,5 +187,148 @@ describe("routes", () => {
 	test("unknown routes 404", async () => {
 		const { base } = startServer();
 		expect((await fetch(`${base}/nope`)).status).toBe(404);
+	});
+});
+
+describe("HITL routes", () => {
+	function fakeRun() {
+		const resumed: Array<{ taskId: string; option: string; feedback?: string }> = [];
+		const run = {
+			runId: "run-1",
+			pending: [{ taskId: "deploy", question: "Ship it?", options: ["yes", "no"] }],
+			resume(taskId: string, option: string, feedback?: string): boolean {
+				if (!this.pending.some((request) => request.taskId === taskId)) return false;
+				this.pending = this.pending.filter((request) => request.taskId !== taskId);
+				resumed.push({ taskId, option, feedback });
+				return true;
+			},
+			pendingApprovals() {
+				return this.pending;
+			},
+			trace(runId?: string) {
+				return Promise.resolve({ runId: runId ?? this.runId, status: "running", tasks: [] });
+			},
+		};
+		return { run, resumed };
+	}
+
+	test("404 on all HITL routes while no run is attached", async () => {
+		const { base } = startServer({ hitl: () => undefined });
+		expect((await fetch(`${base}/tasks/pending`)).status).toBe(404);
+		expect((await fetch(`${base}/trace`)).status).toBe(404);
+		expect((await fetch(`${base}/runs/run-1/trace`)).status).toBe(404);
+		const resume = await fetch(`${base}/tasks/deploy/resume`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ option: "yes" }),
+		});
+		expect(resume.status).toBe(404);
+	});
+
+	test("GET /tasks/pending lists open gates with the run id", async () => {
+		const { run } = fakeRun();
+		const { base } = startServer({ hitl: () => run });
+		expect(await (await fetch(`${base}/tasks/pending`)).json()).toEqual({
+			runId: "run-1",
+			pending: [{ taskId: "deploy", question: "Ship it?", options: ["yes", "no"] }],
+		});
+	});
+
+	test("POST /tasks/:id/resume answers the gate; stale answers 409; bad bodies 400", async () => {
+		const { run, resumed } = fakeRun();
+		const { base } = startServer({ hitl: () => run });
+
+		const ok = await fetch(`${base}/tasks/deploy/resume`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ option: "yes", feedback: "ship it" }),
+		});
+		expect(await ok.json()).toEqual({ ok: true, taskId: "deploy" });
+		expect(resumed).toEqual([{ taskId: "deploy", option: "yes", feedback: "ship it" }]);
+
+		// first answer won; the second surface gets a conflict
+		const stale = await fetch(`${base}/tasks/deploy/resume`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ option: "no" }),
+		});
+		expect(stale.status).toBe(409);
+
+		const invalid = await fetch(`${base}/tasks/deploy/resume`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ feedback: "missing option" }),
+		});
+		expect(invalid.status).toBe(400);
+	});
+
+	test("GET /trace and /runs/:id/trace return the run trace", async () => {
+		const { run } = fakeRun();
+		const { base } = startServer({ hitl: () => run });
+		expect(await (await fetch(`${base}/trace`)).json()).toMatchObject({ runId: "run-1" });
+		expect(await (await fetch(`${base}/runs/run-7/trace`)).json()).toMatchObject({ runId: "run-7" });
+	});
+});
+
+describe("POST /runs", () => {
+	const post = (base: string, body: unknown) =>
+		fetch(`${base}/runs`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: typeof body === "string" ? body : JSON.stringify(body),
+		});
+
+	test("404 when the host wired no startRun handler", async () => {
+		const { base } = startServer();
+		expect((await post(base, { tasks: [{ id: "a", role: "ops" }] })).status).toBe(404);
+	});
+
+	test("202 with the run id; the handler receives the parsed request", async () => {
+		const received: StartRunRequest[] = [];
+		const { base } = startServer({
+			startRun: async (request) => {
+				received.push(request);
+				return { runId: "run-42" };
+			},
+		});
+		const response = await post(base, { tasks: [{ id: "a", role: "ops", prompt: "go", deps: [] }] });
+		expect(response.status).toBe(202);
+		expect(await response.json()).toEqual({ runId: "run-42" });
+		expect(received).toEqual([{ tasks: [{ id: "a", role: "ops", prompt: "go", deps: [] }] }]);
+	});
+
+	test("400 on malformed bodies without invoking the handler", async () => {
+		let calls = 0;
+		const { base } = startServer({
+			startRun: async () => {
+				calls++;
+				return { runId: "x" };
+			},
+		});
+		expect((await post(base, "not json")).status).toBe(400);
+		expect((await post(base, {})).status).toBe(400);
+		expect((await post(base, { tasks: [] })).status).toBe(400);
+		expect((await post(base, { tasks: [{ id: "a" }] })).status).toBe(400);
+		expect((await post(base, { tasks: [{ id: "a", role: "ops", prompt: 7 }] })).status).toBe(400);
+		expect((await post(base, { tasks: [{ id: "a", role: "ops", deps: [1] }] })).status).toBe(400);
+		expect(calls).toBe(0);
+	});
+
+	test("RunRejectedError surfaces with its status; other errors 500", async () => {
+		let error: Error = new RunRejectedError("A run is already active", 409);
+		const { base } = startServer({
+			startRun: async () => {
+				throw error;
+			},
+		});
+		const conflict = await post(base, { tasks: [{ id: "a", role: "ops" }] });
+		expect(conflict.status).toBe(409);
+		expect(await conflict.json()).toEqual({ error: "A run is already active" });
+
+		error = new RunRejectedError('Unknown role "ghost"', 400);
+		expect((await post(base, { tasks: [{ id: "a", role: "ghost" }] })).status).toBe(400);
+
+		error = new Error("disk on fire");
+		expect((await post(base, { tasks: [{ id: "a", role: "ops" }] })).status).toBe(500);
 	});
 });

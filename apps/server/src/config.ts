@@ -12,6 +12,10 @@ export interface ServerConfig {
 	team: RoleConfig[];
 	maxConcurrent?: number;
 	port?: number;
+	/** Root for run/node session storage. Defaults to ~/.hooteams/sessions. */
+	sessionsRoot?: string;
+	/** Restore and continue an interrupted run on startup. Defaults to false. */
+	resumeInterrupted?: boolean;
 }
 
 export const DEFAULT_PORT = 4242;
@@ -24,6 +28,8 @@ export interface RawServerConfig {
 	team?: RawRoleConfig[];
 	maxConcurrent?: number;
 	port?: number;
+	sessionsRoot?: string;
+	resumeInterrupted?: boolean;
 }
 
 /**
@@ -70,10 +76,15 @@ export function validateConfig(raw: RawServerConfig, source: string): ServerConf
 			thinkingLevel: role.thinkingLevel ?? defaults.thinkingLevel,
 		});
 	}
+	if (raw.sessionsRoot !== undefined && typeof raw.sessionsRoot !== "string") {
+		throw new Error(`${source}: "sessionsRoot" must be a string`);
+	}
 	return {
 		defaults: raw.defaults,
 		team,
 		maxConcurrent: raw.maxConcurrent,
 		port: raw.port,
+		sessionsRoot: raw.sessionsRoot,
+		resumeInterrupted: raw.resumeInterrupted === true,
 	};
 }

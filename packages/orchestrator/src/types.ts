@@ -12,10 +12,60 @@ export interface TeamErrorEvent {
 	ts: number;
 }
 
+/** A task hit an approval gate and is waiting for a human to pick an option. */
+export interface TaskPausedEvent {
+	type: "task_paused";
+	taskId: string;
+	role: string;
+	agentId: string;
+	question: string;
+	options: string[];
+	ts: number;
+}
+
+/** A paused task received its answer and is running again. */
+export interface TaskResumedEvent {
+	type: "task_resumed";
+	taskId: string;
+	role: string;
+	agentId: string;
+	chosenOption: string;
+	ts: number;
+}
+
+/** A dag node was dispatched to an agent. */
+export interface TaskStartedEvent {
+	type: "task_started";
+	taskId: string;
+	role: string;
+	agentId: string;
+	ts: number;
+}
+
+/** A dag node settled as done or error. */
+export interface TaskFinishedEvent {
+	type: "task_finished";
+	taskId: string;
+	role: string;
+	agentId: string;
+	status: "done" | "error";
+	ts: number;
+}
+
+/** The whole dag settled. `role` is always "orchestrator"; `agentId` is the run id. */
+export interface DagSettledEvent {
+	type: "dag_complete" | "dag_failed";
+	runId: string;
+	role: string;
+	agentId: string;
+	ts: number;
+}
+
 /**
  * The single wire format every consumer (bridge, canvas, CLI attach) sees:
  * a hoocode AgentEvent tagged with which team member produced it, plus
- * team-level synthetic events like "team_error".
+ * team-level synthetic events like "team_error". Extend this union additively
+ * only — hoocanvas and hoocode attach consume it over SSE by shape.
  */
 export type TeamEvent =
 	| (AgentEvent & {
@@ -23,10 +73,15 @@ export type TeamEvent =
 			agentId: string;
 			ts: number;
 	  })
-	| TeamErrorEvent;
+	| TeamErrorEvent
+	| TaskPausedEvent
+	| TaskResumedEvent
+	| TaskStartedEvent
+	| TaskFinishedEvent
+	| DagSettledEvent;
 
 /** Coarse per-agent status derived from the event stream. */
-export type AgentStatus = "idle" | "thinking" | "streaming" | "tool" | "done" | "error";
+export type AgentStatus = "idle" | "thinking" | "streaming" | "tool" | "done" | "error" | "paused";
 
 /** One unit of work in the team DAG, executed by the agent registered under `role`. */
 export interface TaskNode {
@@ -61,6 +116,41 @@ export interface RoleConfig {
 export interface TeamConfig {
 	roles: RoleConfig[];
 	maxConcurrent?: number;
+}
+
+/** Shape of TaskDag.toJSON(), as persisted in "dag_state" session entries. */
+export type SerializedDag = Record<string, TaskNode>;
+
+/** One approval gate a task went through, reconstructed from session entries. */
+export interface TraceApproval {
+	question: string;
+	options: string[];
+	chosenOption?: string;
+	requestedAt: number;
+	resolvedAt?: number;
+}
+
+/** One task's lifecycle, reconstructed from session entries by buildTrace(). */
+export interface TraceTask {
+	taskId: string;
+	role: string;
+	/** Session id of the node's own conversation, when the harness factory reported one. */
+	sessionId?: string;
+	startedAt?: number;
+	endedAt?: number;
+	status?: AgentStatus;
+	approvals: TraceApproval[];
+}
+
+/** A whole orchestrator run, reconstructed from session entries by buildTrace(). */
+export interface TraceRun {
+	runId: string;
+	status: "running" | "complete" | "failed";
+	startedAt?: number;
+	endedAt?: number;
+	tasks: TraceTask[];
+	/** Last persisted dag snapshot, if any. */
+	dag?: SerializedDag;
 }
 
 export type { AgentEvent, AgentMessage, AgentTool, ThinkingLevel };

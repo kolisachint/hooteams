@@ -9,7 +9,7 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@kolisachint/hoocode-agent-core": "^0.4.44",
+		"@kolisachint/hoocode-agent-core": "^0.4.49",
 		"@kolisachint/hoocode-ai": "^0.4.44",
 		"proper-lockfile": "^4.1.2"
 	},

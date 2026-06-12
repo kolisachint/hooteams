@@ -1,5 +1,18 @@
-import { createRouter, SSEBridge } from "@kolisachint/hooteams-bridge";
-import { createHoocodeAuth, Team, TeamChannel, type TeamOptions } from "@kolisachint/hooteams-orchestrator";
+import { createRouter, type HitlRun, RunRejectedError, SSEBridge, type StartRunRequest, type StartRunTask } from "@kolisachint/hooteams-bridge";
+import {
+	createHoocodeAuth,
+	createNodeHarnessFactory,
+	JsonlSessionRepo,
+	type Session,
+	TaskDag,
+	Team,
+	TeamChannel,
+	TeamOrchestrator,
+	type TeamOptions,
+} from "@kolisachint/hooteams-orchestrator";
+import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { DEFAULT_PORT, type ServerConfig } from "./config.js";
 
 export interface RunningServer {
@@ -8,6 +21,14 @@ export interface RunningServer {
 	team: Team;
 	bridge: SSEBridge;
 	port: number;
+	/**
+	 * Expose a live TeamOrchestrator run on the HITL routes (/tasks/pending,
+	 * /tasks/:id/resume, /trace). The session is the orchestrator's run
+	 * session, read by the trace route. Attaching replaces any previous run;
+	 * the routes 404 until the first attach. POST /runs does this wiring
+	 * itself — this hook is for embedders driving their own orchestrator.
+	 */
+	attachOrchestrator(orchestrator: TeamOrchestrator, session: Session): void;
 	/** Abort all agents, drop SSE clients, and stop listening. */
 	stop(): Promise<void>;
 }
@@ -16,6 +37,10 @@ export interface StartOptions {
 	port?: number;
 	/** Forwarded to the Team (tests inject fake models / stream functions). */
 	teamOptions?: TeamOptions;
+	/** Overrides config.sessionsRoot (tests point this at a temp dir). */
+	sessionsRoot?: string;
+	/** Overrides config.resumeInterrupted. */
+	resumeInterrupted?: boolean;
 }
 
 export function startServer(config: ServerConfig, options: StartOptions = {}): RunningServer {
@@ -28,7 +53,105 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 	};
 	const team = new Team(channel, teamOptions);
 	const bridge = new SSEBridge(channel);
-	const router = createRouter(team, channel, bridge);
+
+	const sessionsRoot = options.sessionsRoot ?? config.sessionsRoot ?? join(homedir(), ".hooteams", "sessions");
+	const repo = new JsonlSessionRepo({ sessionsRoot });
+	// Run sessions are keyed by a stable cwd so a restarted server (possibly
+	// launched from another directory) still finds them for restore/trace.
+	const runsCwd = sessionsRoot;
+
+	let activeRun: HitlRun | undefined;
+	let activeOrchestrator: TeamOrchestrator | undefined;
+	const attachOrchestrator = (orchestrator: TeamOrchestrator, session: Session): void => {
+		activeOrchestrator = orchestrator;
+		activeRun = {
+			runId: orchestrator.runId,
+			resume: (taskId, chosenOption, feedback) => orchestrator.resume(taskId, chosenOption, feedback),
+			pendingApprovals: () => orchestrator.pendingApprovals(),
+			trace: (runId) => TeamOrchestrator.buildTrace(session, runId),
+		};
+	};
+
+	const orchestratorOptions = (runId: string, tasks: StartRunTask[]) => {
+		const prompts = new Map(tasks.filter((task) => task.prompt).map((task) => [task.id, task.prompt!]));
+		return {
+			channel,
+			runId,
+			maxConcurrent: config.maxConcurrent,
+			createHarness: createNodeHarnessFactory({
+				roles: config.team,
+				runId,
+				sessionsRoot,
+				getApiKey: teamOptions.getApiKey,
+				resolveModel: teamOptions.resolveModel,
+				streamFn: teamOptions.streamFn,
+			}),
+			taskPrompt: (node: { id: string }) => prompts.get(node.id) ?? node.id,
+		};
+	};
+
+	const startRun = async (request: StartRunRequest): Promise<{ runId: string }> => {
+		if (activeOrchestrator && !activeOrchestrator.isSettled) {
+			throw new RunRejectedError(`Run "${activeOrchestrator.runId}" is still active`, 409);
+		}
+		const roles = new Set(config.team.map((role) => role.role));
+		const dag = new TaskDag();
+		try {
+			for (const task of request.tasks) {
+				if (!roles.has(task.role)) {
+					const available = [...roles];
+					throw new Error(
+						`Unknown role "${task.role}". Configured roles: ${available.length > 0 ? available.join(", ") : "(none)"}`,
+					);
+				}
+				dag.add({ id: task.id, role: task.role, deps: task.deps });
+			}
+			dag.topologicalOrder(); // throws on unknown deps and cycles
+		} catch (err) {
+			throw new RunRejectedError(err instanceof Error ? err.message : String(err), 400);
+		}
+		const runId = randomUUID();
+		const session = await repo.create({ cwd: runsCwd, id: `run-${runId}` });
+		// Task prompts live only in this request; persist them so a restored
+		// run re-dispatches reset nodes with their real prompts.
+		await session.appendCustomEntry("run_config", { runId, tasks: request.tasks });
+		const orchestrator = new TeamOrchestrator(dag, { session, ...orchestratorOptions(runId, request.tasks) });
+		attachOrchestrator(orchestrator, session);
+		void orchestrator.run();
+		return { runId };
+	};
+
+	/** Reattach the newest unfinished run session and continue driving it. */
+	const restoreInterruptedRun = async (): Promise<void> => {
+		const newestFirst = (await repo.list({ cwd: runsCwd }))
+			.filter((metadata) => metadata.id.startsWith("run-"))
+			.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+		const latest = newestFirst[0];
+		if (!latest) return;
+		const session = await repo.open(latest);
+		let runId: string | undefined;
+		let tasks: StartRunTask[] = [];
+		let ended = false;
+		for (const entry of await session.getEntries()) {
+			if (entry.type !== "custom") continue;
+			const data = entry.data as Record<string, any> | undefined;
+			if (entry.customType === "run_config") {
+				runId ??= data?.runId;
+				tasks = (data?.tasks as StartRunTask[] | undefined) ?? [];
+			} else if (entry.customType === "run_start") {
+				runId ??= data?.runId;
+			} else if (entry.customType === "run_end") {
+				ended = true;
+			}
+		}
+		if (!runId || ended) return;
+		const orchestrator = await TeamOrchestrator.restoreFromSession(session, orchestratorOptions(runId, tasks));
+		attachOrchestrator(orchestrator, session);
+		console.log(`[hooteams] restored interrupted run ${runId}`);
+		void orchestrator.run();
+	};
+
+	const router = createRouter(team, channel, bridge, { hitl: () => activeRun, startRun });
 
 	for (const role of config.team) {
 		if (role.mcpConfigPath) {
@@ -40,6 +163,12 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		} else {
 			team.spawn(role);
 		}
+	}
+
+	if (options.resumeInterrupted ?? config.resumeInterrupted) {
+		void restoreInterruptedRun().catch((error) => {
+			console.error(`[hooteams] failed to restore interrupted run: ${String(error)}`);
+		});
 	}
 
 	let stopping = false;
@@ -68,5 +197,5 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		},
 	});
 
-	return { server, channel, team, bridge, port: server.port ?? 0, stop };
+	return { server, channel, team, bridge, port: server.port ?? 0, attachOrchestrator, stop };
 }

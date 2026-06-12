@@ -38,12 +38,15 @@ After `bun install` the `hooteams` binary is linked globally (via `npm link` in 
 hooteams — multi-agent orchestration for hoocode
 
 Usage:
-  hooteams start  [--config path] [--port 4242]     start the team server
-  hooteams attach <role> [--replay 50] [--host …]   attach this terminal to an agent
-  hooteams nudge  <role> "<message>" [--host …]     inject a message mid-run
-  hooteams status [--host …]                        all agents at a glance
-  hooteams stop   [--host …]                        stop the server gracefully
-  hooteams help                                     show usage
+  hooteams start  [--config path] [--port 4242] [--resume]  start the team server
+  hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
+  hooteams pending [--host …]                               list approval gates awaiting an answer
+  hooteams resume <taskId> "<option>" [--feedback "…"]      answer an approval gate
+  hooteams attach <role> [--replay 50] [--host …]           attach this terminal to an agent
+  hooteams nudge  <role> "<message>" [--host …]             inject a message mid-run
+  hooteams status [--host …]                                all agents at a glance
+  hooteams stop   [--host …]                                stop the server gracefully
+  hooteams help                                             show usage
 ```
 
 ### `hooteams start`
@@ -58,8 +61,49 @@ hooteams start --config hooteams.config.json --port 4242
 |------------|-------------------------|-------------------------------------------------|
 | `--config` | `hooteams.config.json`  | Path to config file. Missing default → empty team (agents spawned via planner or API) |
 | `--port`   | `4242`                  | HTTP port to listen on                          |
+| `--resume` | off                     | Restore and continue the newest interrupted run from session storage |
 
 Shuts down cleanly on `SIGINT` / `SIGTERM` (aborts agents, closes SSE streams, stops the server).
+
+### `hooteams run`
+
+Start a task-graph run: every task is dispatched to its role's agent once its dependencies finish, up to `maxConcurrent` at a time. The command follows the run's lifecycle on the event stream until the graph settles (`--detach` prints the run id and exits; the run keeps going server-side).
+
+```bash
+hooteams run examples/demo-run.json
+```
+
+The file holds the task graph (a bare task array works too):
+
+```json
+{
+  "tasks": [
+    { "id": "draft", "role": "coder", "prompt": "Write a haiku about shipping software." },
+    { "id": "ship", "role": "planner", "deps": ["draft"], "prompt": "Ask the human for approval, then declare the haiku shipped." }
+  ]
+}
+```
+
+| Task field | Required | Description                                            |
+|------------|----------|--------------------------------------------------------|
+| `id`       | ✓        | Unique task id                                         |
+| `role`     | ✓        | Role from the server config that executes this task    |
+| `prompt`   |          | Text that starts the task's run (default: the task id) |
+| `deps`     |          | Task ids that must be `done` before this one starts    |
+
+Each task runs on a fresh agent with its own persisted session under `~/.hooteams/sessions`, with the human-in-the-loop protocol appended to its system prompt: an agent that needs a human decision ends its reply with `AWAITING_APPROVAL: <question> | <option1>, <option2>` and the task pauses (releasing its concurrency slot) until someone answers — from this CLI, `hoocode --team`, or hoocanvas. First answer wins.
+
+### `hooteams pending` / `hooteams resume`
+
+Inspect and answer the active run's approval gates.
+
+```bash
+hooteams pending
+# ship: Publish the haiku?
+#   options: yes, no
+
+hooteams resume ship "yes" --feedback "love it"
+```
 
 ### `hooteams attach`
 
@@ -175,7 +219,13 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
   "maxConcurrent": 3,
 
   // Server port (can also be set via --port flag or PORT env var)
-  "port": 4242
+  "port": 4242,
+
+  // Root directory for run/node session storage (default: ~/.hooteams/sessions)
+  "sessionsRoot": "~/.hooteams/sessions",
+
+  // Restore and continue an interrupted run on startup (default: false; also --resume)
+  "resumeInterrupted": false
 }
 ```
 
@@ -272,16 +322,21 @@ Embedders can override this entirely by passing their own resolver: `startServer
 
 The server exposes an HTTP API that any client (CLI, hoocanvas, curl) can use.
 
-| Route            | Method | Description                                                            |
-|------------------|--------|------------------------------------------------------------------------|
-| `/events`        | GET    | SSE stream of all agents (replay + live)                               |
-| `/events/:role`  | GET    | SSE stream of one agent; `?replay=N` limits replayed history           |
-| `/steer`         | POST   | `{ "role": "coder", "message": "…" }` — queue a mid-run steering message |
-| `/status`        | GET    | `{ [role]: { status, lastEventType } }`                                |
-| `/health`        | GET    | `{ "ok": true }`                                                      |
-| `/stop`          | POST   | Graceful shutdown (abort agents, close streams)                        |
+| Route                   | Method | Description                                                            |
+|-------------------------|--------|------------------------------------------------------------------------|
+| `/events`               | GET    | SSE stream of all agents (replay + live)                               |
+| `/events/:role`         | GET    | SSE stream of one agent; `?replay=N` limits replayed history           |
+| `/steer`                | POST   | `{ "role": "coder", "message": "…" }` — queue a mid-run steering message |
+| `/runs`                 | POST   | `{ "tasks": [{ id, role, prompt?, deps? }] }` → `202 { runId }`; `409` while a run is active; `400` on unknown roles or cyclic deps |
+| `/tasks/pending`        | GET    | `{ runId, pending: [{ taskId, question, options }] }` — open approval gates |
+| `/tasks/:taskId/resume` | POST   | `{ "option": "yes", "feedback": "…" }` — answer a gate; `409` if another surface answered first |
+| `/trace`                | GET    | Audit trail of the active run (tasks, timings, approvals)              |
+| `/runs/:runId/trace`    | GET    | Audit trail for one run id                                             |
+| `/status`               | GET    | `{ [role]: { status, lastEventType } }`                                |
+| `/health`               | GET    | `{ "ok": true }`                                                      |
+| `/stop`                 | POST   | Graceful shutdown (abort agents, close streams)                        |
 
-All endpoints return JSON (except `/events` which returns SSE). CORS is enabled for all origins.
+All endpoints return JSON (except `/events` which returns SSE). CORS is enabled for all origins. The run/HITL routes respond `404` while no run is attached.
 
 ### Examples
 
@@ -296,6 +351,20 @@ curl -N "http://localhost:4242/events/coder?replay=20"
 curl -X POST http://localhost:4242/steer \
   -H "Content-Type: application/json" \
   -d '{"role": "coder", "message": "focus on the auth module first"}'
+
+# Start a task-graph run
+curl -X POST http://localhost:4242/runs \
+  -H "Content-Type: application/json" \
+  -d '{"tasks": [{"id": "deploy", "role": "ops", "prompt": "deploy the app"}]}'
+
+# See which tasks are paused on an approval gate, and answer one
+curl http://localhost:4242/tasks/pending
+curl -X POST http://localhost:4242/tasks/deploy/resume \
+  -H "Content-Type: application/json" \
+  -d '{"option": "yes"}'
+
+# Audit a run
+curl http://localhost:4242/trace
 
 # Check agent statuses
 curl http://localhost:4242/status
