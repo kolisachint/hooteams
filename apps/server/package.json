@@ -10,7 +10,9 @@
 	},
 	"dependencies": {
 		"@kolisachint/hooteams-bridge": "workspace:*",
-		"@kolisachint/hooteams-orchestrator": "workspace:*"
+		"@kolisachint/hooteams-orchestrator": "workspace:*",
+		"@kolisachint/hoocode-agent-core": "^0.4.49",
+		"@kolisachint/hoocode-ai": "^0.4.49"
 	},
 	"author": "Sachin Koli",
 	"license": "MIT"

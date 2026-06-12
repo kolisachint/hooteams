@@ -191,8 +191,8 @@ describe("startServer", () => {
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
 	constructor() {
 		super(
-			(event) => event.type === "done" || event.type === "error",
-			(event) => {
+			(event: AssistantMessageEvent) => event.type === "done" || event.type === "error",
+			(event: AssistantMessageEvent) => {
 				if (event.type === "done") return event.message;
 				if (event.type === "error") return event.error;
 				throw new Error("Unexpected event type");

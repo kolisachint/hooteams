@@ -28,6 +28,10 @@
         "@kolisachint/hooteams-bridge": "workspace:*",
         "@kolisachint/hooteams-orchestrator": "workspace:*",
       },
+      "devDependencies": {
+        "@kolisachint/hoocode-agent-core": "^0.4.49",
+        "@kolisachint/hoocode-ai": "^0.4.49",
+      },
     },
     "packages/bridge": {
       "name": "@kolisachint/hooteams-bridge",
