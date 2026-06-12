@@ -96,6 +96,15 @@ export class TaskDag {
 		this.require(id).status = "error";
 	}
 
+	/**
+	 * Mark a running node as waiting on a human approval. Paused nodes are
+	 * neither ready nor complete, so the dag stays open until they resume
+	 * (markRunning) and eventually settle.
+	 */
+	markPaused(id: string): void {
+		this.require(id).status = "paused";
+	}
+
 	/** Nodes that can never run because a transitive dependency failed. */
 	blocked(): TaskNode[] {
 		const failed = new Set(this.all().filter((node) => node.status === "error").map((node) => node.id));
@@ -130,6 +139,23 @@ export class TaskDag {
 			snapshot[id] = { ...node, deps: node.deps.slice() };
 		}
 		return snapshot;
+	}
+
+	/**
+	 * Reset nodes caught mid-run (thinking/streaming/tool) back to idle so a
+	 * restored dag re-dispatches them. Paused nodes are left paused — their
+	 * approval gate is re-surfaced instead of re-running them. Returns the
+	 * nodes that were reset.
+	 */
+	resetTransient(): TaskNode[] {
+		const reset: TaskNode[] = [];
+		for (const node of this.nodes.values()) {
+			if (node.status === "thinking" || node.status === "streaming" || node.status === "tool") {
+				node.status = "idle";
+				reset.push(node);
+			}
+		}
+		return reset;
 	}
 
 	/** Rebuild a dag from a toJSON() snapshot, preserving statuses and results. */

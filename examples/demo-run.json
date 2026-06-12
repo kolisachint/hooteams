@@ -1,0 +1,15 @@
+{
+	"tasks": [
+		{
+			"id": "draft",
+			"role": "coder",
+			"prompt": "Write a haiku about shipping software. Reply with just the haiku."
+		},
+		{
+			"id": "ship",
+			"role": "planner",
+			"deps": ["draft"],
+			"prompt": "You are about to publish the team's release haiku. Ask the human for approval first (you have a protocol for that in your instructions), then declare the outcome in one line."
+		}
+	]
+}

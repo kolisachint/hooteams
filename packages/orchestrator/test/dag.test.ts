@@ -83,6 +83,44 @@ describe("markDone propagation", () => {
 	});
 });
 
+describe("paused nodes", () => {
+	test("paused nodes are neither ready nor complete", () => {
+		const dag = diamond();
+		dag.markDone("plan");
+		dag.markRunning("code");
+		dag.markPaused("code");
+		expect(dag.get("code")?.status).toBe("paused");
+		expect(dag.ready().map((node) => node.id)).toEqual(["docs"]);
+		dag.markDone("docs");
+		// code is paused and test depends on it — the dag stays open
+		expect(dag.isComplete()).toBe(false);
+		dag.markRunning("code");
+		dag.markDone("code");
+		dag.markDone("test");
+		expect(dag.isComplete()).toBe(true);
+	});
+
+	test("paused status round-trips through toJSON/fromJSON", () => {
+		const dag = diamond();
+		dag.markDone("plan");
+		dag.markPaused("code");
+		const restored = TaskDag.fromJSON(JSON.parse(JSON.stringify(dag.toJSON())));
+		expect(restored.get("code")?.status).toBe("paused");
+	});
+
+	test("resetTransient reverts mid-run nodes to idle but keeps paused and done", () => {
+		const dag = diamond();
+		dag.markDone("plan");
+		dag.markRunning("code", "streaming");
+		dag.markPaused("docs");
+		const reset = dag.resetTransient();
+		expect(reset.map((node) => node.id)).toEqual(["code"]);
+		expect(dag.get("code")?.status).toBe("idle");
+		expect(dag.get("docs")?.status).toBe("paused");
+		expect(dag.get("plan")?.status).toBe("done");
+	});
+});
+
 describe("persistence", () => {
 	test("toJSON/fromJSON round-trips nodes, statuses, and results", () => {
 		const dag = diamond();

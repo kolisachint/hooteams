@@ -38,6 +38,34 @@ describe("toWire", () => {
 		const event = { ...tag, type: "agent_start" } as TeamEvent;
 		expect(toWire(event)).toEqual({ type: "agent_start", ...tag });
 	});
+
+	test("task_paused carries the approval gate over the wire", () => {
+		const event: TeamEvent = {
+			...tag,
+			type: "task_paused",
+			taskId: "deploy",
+			question: "Ship it?",
+			options: ["yes", "no"],
+		};
+		expect(toWire(event)).toEqual({
+			type: "task_paused",
+			...tag,
+			taskId: "deploy",
+			question: "Ship it?",
+			options: ["yes", "no"],
+		});
+	});
+
+	test("dag settlement events pass through with their runId", () => {
+		const event: TeamEvent = { type: "dag_complete", runId: "run-1", role: "orchestrator", agentId: "run-1", ts: 1000 };
+		expect(toWire(event)).toEqual({
+			type: "dag_complete",
+			runId: "run-1",
+			role: "orchestrator",
+			agentId: "run-1",
+			ts: 1000,
+		});
+	});
 });
 
 describe("safeStringify", () => {

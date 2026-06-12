@@ -12,7 +12,7 @@
     },
     "apps/cli": {
       "name": "@kolisachint/hooteams-cli",
-      "version": "0.1.6",
+      "version": "0.1.9",
       "bin": {
         "hooteams": "./src/index.ts",
       },
@@ -23,7 +23,7 @@
     },
     "apps/server": {
       "name": "@kolisachint/hooteams-server",
-      "version": "0.1.6",
+      "version": "0.1.9",
       "dependencies": {
         "@kolisachint/hooteams-bridge": "workspace:*",
         "@kolisachint/hooteams-orchestrator": "workspace:*",
@@ -31,16 +31,16 @@
     },
     "packages/bridge": {
       "name": "@kolisachint/hooteams-bridge",
-      "version": "0.1.6",
+      "version": "0.1.9",
       "dependencies": {
         "@kolisachint/hooteams-orchestrator": "workspace:*",
       },
     },
     "packages/orchestrator": {
       "name": "@kolisachint/hooteams-orchestrator",
-      "version": "0.1.6",
+      "version": "0.1.9",
       "dependencies": {
-        "@kolisachint/hoocode-agent-core": "^0.4.44",
+        "@kolisachint/hoocode-agent-core": "^0.4.49",
         "@kolisachint/hoocode-ai": "^0.4.44",
         "proper-lockfile": "^4.1.2",
       },

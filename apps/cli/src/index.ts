@@ -1,18 +1,23 @@
 #!/usr/bin/env bun
 import { loadConfig, startServer } from "@kolisachint/hooteams-server";
-import { attach, nudge, status, stop } from "./commands.js";
+import { attach, nudge, pending, resume, run, status, stop } from "./commands.js";
 
 const USAGE = `hooteams — multi-agent orchestration for hoocode
 
 Usage:
-  hooteams start  [--config path] [--port 4242]     start the team server
-  hooteams attach <role> [--replay 50] [--host …]   attach this terminal to an agent
-  hooteams nudge  <role> "<message>" [--host …]     inject a message mid-run
-  hooteams status [--host …]                        all agents at a glance
-  hooteams stop   [--host …]                        stop the server gracefully
+  hooteams start  [--config path] [--port 4242] [--resume]  start the team server
+  hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
+  hooteams pending [--host …]                               list approval gates awaiting an answer
+  hooteams resume <taskId> "<option>" [--feedback "…"]      answer an approval gate
+  hooteams attach <role> [--replay 50] [--host …]           attach this terminal to an agent
+  hooteams nudge  <role> "<message>" [--host …]             inject a message mid-run
+  hooteams status [--host …]                                all agents at a glance
+  hooteams stop   [--host …]                                stop the server gracefully
 
 Options:
-  --host   bridge base URL (default http://localhost:4242)
+  --host     bridge base URL (default http://localhost:4242)
+  --resume   restore and continue an interrupted run on startup
+  --detach   print the run id and exit instead of following the run
 `;
 
 const args = process.argv.slice(2);
@@ -43,7 +48,10 @@ try {
 		case "start": {
 			const config = await loadConfig(readFlag("config"));
 			const portFlag = readFlag("port");
-			const running = startServer(config, { port: portFlag ? Number(portFlag) : undefined });
+			const running = startServer(config, {
+				port: portFlag ? Number(portFlag) : undefined,
+				resumeInterrupted: args.includes("--resume") || undefined,
+			});
 			console.log(`hooteams server listening on http://localhost:${running.port}`);
 			if (config.team.length > 0) console.log(`team: ${config.team.map((role) => role.role).join(", ")}`);
 			const shutdown = async () => {
@@ -52,6 +60,22 @@ try {
 			};
 			process.on("SIGINT", () => void shutdown());
 			process.on("SIGTERM", () => void shutdown());
+			break;
+		}
+		case "run": {
+			const file = positional(0);
+			if (!file) throw new Error("Usage: hooteams run <tasks.json>");
+			await run(host, file, !args.includes("--detach"));
+			break;
+		}
+		case "pending":
+			await pending(host);
+			break;
+		case "resume": {
+			const taskId = positional(0);
+			const option = positional(1);
+			if (!taskId || !option) throw new Error('Usage: hooteams resume <taskId> "<option>"');
+			await resume(host, taskId, option, readFlag("feedback"));
 			break;
 		}
 		case "attach": {
