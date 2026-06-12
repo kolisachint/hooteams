@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.13] - 2026-06-12
 
 ### Added
 - Agent memory & shared knowledge store: `TeamMemory` is a project-scoped (not per-run) JSON store under `~/.hooteams/memory`, shared by every agent on the team and surviving across runs. Agents read/write it through the new `memory_read`/`memory_write` tools (`createMemoryReadTool`/`createMemoryWriteTool`); `TeamOrchestratorOptions.memory` (the new `RunMemory` hook) auto-records every settled task's output at run end and injects prior-run context (`bootstrapContext`) into root task prompts, so new runs on the same project start from what earlier runs learned. Store operations are serialized and saves are atomic (temp file + rename); helpers `projectKeyFromCwd()` and `defaultMemoryRoot()` are exported.

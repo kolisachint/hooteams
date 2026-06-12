@@ -1,6 +1,6 @@
 {
 	"name": "@kolisachint/hooteams-bridge",
-	"version": "0.1.12",
+	"version": "0.1.13",
 	"description": "SSE bridge exposing the hooteams event channel over HTTP: fan-out streams, wire serializer, steer/status routes",
 	"type": "module",
 	"main": "./src/index.ts",
