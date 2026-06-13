@@ -10,8 +10,8 @@ export { createHoocodeAuth, defaultAuthPath } from "./auth.js";
 export type { AuthCredential, AuthFileData, GetApiKey, HoocodeAuthOptions } from "./auth.js";
 export { REPLAY_BUFFER_SIZE, TeamChannel } from "./channel.js";
 export type { Subscribable, TeamEventListener } from "./channel.js";
-export { TaskDag } from "./dag.js";
-export type { TaskNodeInput } from "./dag.js";
+export { TaskDag } from "@kolisachint/hooteams-dag";
+export type { TaskNodeInput } from "@kolisachint/hooteams-dag";
 export { createMemoryReadTool, createMemoryWriteTool, defaultMemoryRoot, projectKeyFromCwd, TeamMemory } from "./memory.js";
 export type { MemoryEntry, MemoryTaskRecord, TeamMemoryOptions } from "./memory.js";
 export { createNodeHarnessFactory, createValidatorAgent, HITL_SYSTEM_PROMPT, VALIDATOR_PROTOCOL } from "./node-harness.js";
@@ -30,6 +30,7 @@ export {
 export type { AskAgentOptions, PlanBuffer, PlannedTask, PlannerOptions } from "./planner.js";
 export { Team } from "./team.js";
 export type { TeamOptions } from "./team.js";
+export { FakeNodeHarness, fakeHarnessFactory } from "./testing.js";
 export { APPROVAL_MARKER, extractMessageText, GOAL_UNMET_MARKER, TeamOrchestrator } from "./team-orchestrator.js";
 export type { NodeHandle, NodeHarness, RunMemory, RunValidator, TeamOrchestratorOptions } from "./team-orchestrator.js";
 export type {

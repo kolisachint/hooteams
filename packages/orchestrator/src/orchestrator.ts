@@ -1,5 +1,5 @@
 import type { TeamChannel } from "./channel.js";
-import type { TaskDag } from "./dag.js";
+import type { TaskDag } from "@kolisachint/hooteams-dag";
 import type { Team } from "./team.js";
 import type { TaskNode, TeamEvent } from "./types.js";
 

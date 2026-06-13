@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+- Extracted the `TaskDag` (and the `TaskNode`/`AgentStatus`/`SerializedDag` types) into a new dependency-free `@kolisachint/hooteams-dag` package, the foundation layer of the dependency stack (`dag ← orchestrator ← bridge ← server ← cli`). `TaskDag`, `TaskNodeInput`, and the moved types are re-exported from this package's barrel, so the public API is unchanged. New dependency: `@kolisachint/hooteams-dag`.
+
+### Added
+- New `TeamOrchestratorOptions` hooks: `prepareTaskPrompt(node, basePrompt)` is the last chance to reshape a node's prompt (after task prompt + dependency outputs + memory bootstrap are composed) before dispatch; `afterTaskSettle(node, status)` observes every node as it settles done/error (output included). Both are best-effort and decoupled from the run lifecycle — `prepareTaskPrompt` failures settle the node as errored, `afterTaskSettle` throws/rejections are swallowed.
+- Immutable dag snapshots and the explicit `setOutput`/`incrementAttempts` mutators they require (see `@kolisachint/hooteams-dag`); the orchestrator now routes its node-output and retry-count writes through them.
+- Run-level failure handling: an unexpected fault in the synchronous dispatch path now drives the full failure lifecycle (`team_error` + `run_end` "failed" + final dag snapshot + `dag_failed`) instead of rejecting or hanging — `run()` still never rejects.
+- Fake-first testing utilities: `FakeNodeHarness` (a scripted, deterministic `NodeHarness` stand-in — `queue()` assistant text or an `Error`, defaults to echoing the prompt) and `fakeHarnessFactory(script?)` (a ready-made `createHarness` returning one fake per node), so dag/orchestrator tests run with no API key or real model.
+
 ## [0.1.13] - 2026-06-12
 
 ### Added
