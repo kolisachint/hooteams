@@ -30,6 +30,7 @@ export {
 export type { AskAgentOptions, PlanBuffer, PlannedTask, PlannerOptions } from "./planner.js";
 export { Team } from "./team.js";
 export type { TeamOptions } from "./team.js";
+export { FakeNodeHarness, fakeHarnessFactory } from "./testing.js";
 export { APPROVAL_MARKER, extractMessageText, GOAL_UNMET_MARKER, TeamOrchestrator } from "./team-orchestrator.js";
 export type { NodeHandle, NodeHarness, RunMemory, RunValidator, TeamOrchestratorOptions } from "./team-orchestrator.js";
 export type {

@@ -131,9 +131,9 @@ describe("retries and rework", () => {
 	test("resetToIdle re-arms a settled node, clearing results and output but not attempts", () => {
 		const dag = diamond();
 		dag.markDone("plan", [{ role: "user", content: "done", timestamp: 1 } as any]);
-		const plan = dag.get("plan")!;
-		plan.output = "the plan";
-		plan.attempts = 1;
+		dag.setOutput("plan", "the plan");
+		dag.incrementAttempts("plan");
+		expect(dag.get("plan")?.output).toBe("the plan");
 
 		const node = dag.resetToIdle("plan");
 
@@ -143,6 +143,36 @@ describe("retries and rework", () => {
 		expect(node.attempts).toBe(1);
 		expect(dag.ready().map((other) => other.id)).toEqual(["plan"]);
 		expect(dag.isComplete()).toBe(false);
+	});
+
+	test("incrementAttempts counts up and returns the running total", () => {
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "x" });
+		expect(dag.incrementAttempts("a")).toBe(1);
+		expect(dag.incrementAttempts("a")).toBe(2);
+		expect(dag.get("a")?.attempts).toBe(2);
+	});
+});
+
+describe("immutable snapshots", () => {
+	test("accessors hand back frozen copies, so external writes never leak into the dag", () => {
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "x" });
+		const node = dag.get("a")!;
+		expect(Object.isFrozen(node)).toBe(true);
+		expect(() => {
+			(node as any).output = "leak";
+		}).toThrow();
+		// the dag's own state is untouched by the rejected write
+		expect(dag.get("a")?.output).toBeUndefined();
+	});
+
+	test("mutating a returned node's deps array does not change the dag", () => {
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "x", deps: [] });
+		const node = dag.get("a")!;
+		node.deps.push("ghost");
+		expect(dag.get("a")?.deps).toEqual([]);
 	});
 });
 

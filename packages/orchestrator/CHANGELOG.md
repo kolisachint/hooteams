@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- Immutable dag snapshots: `TaskDag` accessors (`get`/`all`/`ready`/`blocked`/`resetToIdle`/`add`) now return frozen shallow copies, so external code can never mutate a node's state through a live reference (a write throws in strict mode). All node mutation goes through the dag's own methods, including the new `setOutput(id, output)` and `incrementAttempts(id)`. `add()` no longer writes an `undefined` `retries` key.
+- New `TeamOrchestratorOptions` hooks: `prepareTaskPrompt(node, basePrompt)` is the last chance to reshape a node's prompt (after task prompt + dependency outputs + memory bootstrap are composed) before dispatch; `afterTaskSettle(node, status)` observes every node as it settles done/error (output included). Both are best-effort and decoupled from the run lifecycle — `prepareTaskPrompt` failures settle the node as errored, `afterTaskSettle` throws/rejections are swallowed.
+- Run-level failure handling: an unexpected fault in the synchronous dispatch path now drives the full failure lifecycle (`team_error` + `run_end` "failed" + final dag snapshot + `dag_failed`) instead of rejecting or hanging — `run()` still never rejects.
+- Fake-first testing utilities: `FakeNodeHarness` (a scripted, deterministic `NodeHarness` stand-in — `queue()` assistant text or an `Error`, defaults to echoing the prompt) and `fakeHarnessFactory(script?)` (a ready-made `createHarness` returning one fake per node), so dag/orchestrator tests run with no API key or real model.
+
 ## [0.1.13] - 2026-06-12
 
 ### Added

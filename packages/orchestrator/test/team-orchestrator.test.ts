@@ -502,6 +502,92 @@ describe("TeamOrchestrator", () => {
 		expect(events.at(-1)?.type).toBe("dag_complete");
 	});
 
+	test("prepareTaskPrompt reshapes a node's prompt before dispatch", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		const { fakes, createHarness } = fixture();
+
+		await new TeamOrchestrator(dag, {
+			session,
+			createHarness,
+			prepareTaskPrompt: (node, base) => `[${node.role}] ${base} :: extra`,
+		}).run();
+
+		expect(fakes.get("a")?.prompts[0]).toBe("[coder] a :: extra");
+	});
+
+	test("afterTaskSettle observes every node as it settles, output included", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		dag.add({ id: "b", role: "tester" });
+		const { createHarness } = fixture((harness, text) => {
+			if (text === "b") {
+				harness.failRun(new Error("nope"));
+				return;
+			}
+			harness.endRun([assistant(`did ${text}`)]);
+		});
+		const settled: Array<[string, string, string | undefined]> = [];
+
+		await new TeamOrchestrator(dag, {
+			session,
+			createHarness,
+			afterTaskSettle: (node, status) => {
+				settled.push([node.id, status, node.output]);
+			},
+		}).run();
+
+		expect(settled.sort()).toEqual([
+			["a", "done", "did a"],
+			["b", "error", undefined],
+		]);
+	});
+
+	test("a throwing afterTaskSettle does not block the run", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		const { createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+
+		await new TeamOrchestrator(dag, {
+			session,
+			channel,
+			createHarness,
+			afterTaskSettle: () => {
+				throw new Error("observer down");
+			},
+		}).run();
+
+		expect(dag.get("a")?.status).toBe("done");
+		expect(events.at(-1)?.type).toBe("dag_complete");
+	});
+
+	test("a fault in the dispatch loop fails the run with a full lifecycle instead of rejecting", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		const { createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+
+		const orchestrator = new TeamOrchestrator(dag, { session, channel, createHarness, runId: "run-f" });
+		// Simulate an unexpected internal fault in the synchronous dispatch path.
+		(orchestrator as any).fill = () => {
+			throw new Error("dispatch boom");
+		};
+
+		await expect(orchestrator.run()).resolves.toBeUndefined();
+		expect(events.some((event) => event.type === "team_error" && event.error.includes("dispatch boom"))).toBe(true);
+		expect(events.at(-1)?.type).toBe("dag_failed");
+		expect(await customEntries(session, "run_end")).toEqual([{ runId: "run-f", status: "failed", ts: expect.any(Number) }]);
+	});
+
 	test("run() may only be called once", async () => {
 		const session = await new InMemorySessionRepo().create();
 		const dag = new TaskDag();

@@ -20,17 +20,41 @@ export class TaskDag {
 		if (this.nodes.has(input.id)) {
 			throw new Error(`Task "${input.id}" already exists`);
 		}
-		const node: TaskNode = { id: input.id, role: input.role, deps: input.deps?.slice() ?? [], status: "idle", retries: input.retries };
+		const node: TaskNode = { id: input.id, role: input.role, deps: input.deps?.slice() ?? [], status: "idle" };
+		if (input.retries !== undefined) node.retries = input.retries;
 		this.nodes.set(input.id, node);
-		return node;
+		return this.snapshot(node);
 	}
 
 	get(id: string): TaskNode | undefined {
-		return this.nodes.get(id);
+		const node = this.nodes.get(id);
+		return node ? this.snapshot(node) : undefined;
 	}
 
 	all(): TaskNode[] {
-		return [...this.nodes.values()];
+		return [...this.nodes.values()].map((node) => this.snapshot(node));
+	}
+
+	/**
+	 * Frozen shallow copy handed to external callers, so the dag's internal node
+	 * state is never held as a live mutable reference: writing to a returned
+	 * node throws (strict mode). All mutation goes through the dag's own methods
+	 * (markRunning, markDone, setOutput, incrementAttempts, …).
+	 */
+	private snapshot(node: TaskNode): TaskNode {
+		return Object.freeze({ ...node, deps: node.deps.slice() });
+	}
+
+	/** Record a settled node's final assistant text, injected into dependents' prompts. */
+	setOutput(id: string, output: string | undefined): void {
+		this.require(id).output = output;
+	}
+
+	/** Count one more failed/reworked attempt against a node and return the new total. */
+	incrementAttempts(id: string): number {
+		const node = this.require(id);
+		node.attempts = (node.attempts ?? 0) + 1;
+		return node.attempts;
 	}
 
 	/** Kahn's algorithm. Throws on unknown deps or cycles. */
@@ -117,7 +141,7 @@ export class TaskDag {
 		node.status = "idle";
 		node.results = undefined;
 		node.output = undefined;
-		return node;
+		return this.snapshot(node);
 	}
 
 	/** Nodes that can never run because a transitive dependency failed. */
@@ -130,7 +154,7 @@ export class TaskDag {
 			if (node.status === "error") continue;
 			if (node.deps.some((dep) => failed.has(dep))) {
 				failed.add(node.id);
-				blocked.push(node);
+				blocked.push(this.snapshot(node));
 			}
 		}
 		return blocked;
@@ -167,7 +191,7 @@ export class TaskDag {
 		for (const node of this.nodes.values()) {
 			if (node.status === "thinking" || node.status === "streaming" || node.status === "tool") {
 				node.status = "idle";
-				reset.push(node);
+				reset.push(this.snapshot(node));
 			}
 		}
 		return reset;
