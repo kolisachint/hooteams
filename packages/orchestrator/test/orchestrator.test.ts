@@ -3,7 +3,7 @@ import type { StreamFn } from "@kolisachint/hoocode-agent-core";
 import { type AssistantMessage, type AssistantMessageEvent, type AssistantMessageEventStream } from "@kolisachint/hoocode-ai";
 import { EventStream } from "@kolisachint/hoocode-ai";
 import { TeamChannel } from "../src/channel.js";
-import { TaskDag } from "../src/dag.js";
+import { TaskDag } from "@kolisachint/hooteams-dag";
 import { Orchestrator } from "../src/orchestrator.js";
 import { Team } from "../src/team.js";
 import type { TeamEvent } from "../src/types.js";

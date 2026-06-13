@@ -67,7 +67,7 @@ describe("markDone propagation", () => {
 		const dag = diamond();
 		const messages = [{ role: "user" as const, content: "done", timestamp: Date.now() }];
 		dag.markDone("plan", messages);
-		expect(dag.get("plan")?.results).toBe(messages);
+		expect(dag.get("plan")?.results).toEqual(messages);
 	});
 
 	test("failed nodes block their descendants", () => {
@@ -121,6 +121,70 @@ describe("paused nodes", () => {
 	});
 });
 
+describe("retries and rework", () => {
+	test("add() records the retry budget on the node", () => {
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "x", retries: 2 });
+		expect(dag.get("a")?.retries).toBe(2);
+	});
+
+	test("resetToIdle re-arms a settled node, clearing results and output but not attempts", () => {
+		const dag = diamond();
+		dag.markDone("plan", [{ role: "user", content: "done", timestamp: 1 } as any]);
+		dag.setOutput("plan", "the plan");
+		dag.incrementAttempts("plan");
+		expect(dag.get("plan")?.output).toBe("the plan");
+
+		const node = dag.resetToIdle("plan");
+
+		expect(node.status).toBe("idle");
+		expect(node.results).toBeUndefined();
+		expect(node.output).toBeUndefined();
+		expect(node.attempts).toBe(1);
+		expect(dag.ready().map((other) => other.id)).toEqual(["plan"]);
+		expect(dag.isComplete()).toBe(false);
+	});
+
+	test("incrementAttempts counts up and returns the running total", () => {
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "x" });
+		expect(dag.incrementAttempts("a")).toBe(1);
+		expect(dag.incrementAttempts("a")).toBe(2);
+		expect(dag.get("a")?.attempts).toBe(2);
+	});
+});
+
+describe("immutable snapshots", () => {
+	test("accessors hand back frozen copies, so external writes never leak into the dag", () => {
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "x" });
+		const node = dag.get("a")!;
+		expect(Object.isFrozen(node)).toBe(true);
+		expect(() => {
+			(node as any).output = "leak";
+		}).toThrow();
+		// the dag's own state is untouched by the rejected write
+		expect(dag.get("a")?.output).toBeUndefined();
+	});
+
+	test("mutating a returned node's deps array does not change the dag", () => {
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "x", deps: [] });
+		const node = dag.get("a")!;
+		node.deps.push("ghost");
+		expect(dag.get("a")?.deps).toEqual([]);
+	});
+
+	test("mutating a returned node's results array does not change the dag", () => {
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "x" });
+		dag.markDone("a", [{ role: "assistant", content: "one", timestamp: 1 } as any]);
+		const node = dag.get("a")!;
+		node.results!.push({ role: "user", content: "leak", timestamp: 2 } as any);
+		expect(dag.get("a")?.results).toHaveLength(1);
+	});
+});
+
 describe("persistence", () => {
 	test("toJSON/fromJSON round-trips nodes, statuses, and results", () => {
 		const dag = diamond();
@@ -133,6 +197,20 @@ describe("persistence", () => {
 		expect(restored.get("plan")?.results).toEqual(dag.get("plan")?.results);
 		// derived state survives the round trip: code is running, docs is ready
 		expect(restored.ready().map((node) => node.id)).toEqual(["docs"]);
+	});
+
+	test("a node reset after producing output round-trips cleanly", () => {
+		const dag = diamond();
+		dag.markDone("plan");
+		dag.setOutput("plan", "the plan");
+		dag.resetToIdle("plan");
+
+		const restored = TaskDag.fromJSON(JSON.parse(JSON.stringify(dag.toJSON())));
+
+		// resetToIdle clears output/results by removing them, so the serialized
+		// shape is stable: no explicit-undefined keys to drop on the round trip.
+		expect(restored.all()).toEqual(dag.all());
+		expect(dag.get("plan")?.output).toBeUndefined();
 	});
 
 	test("the restored dag is independent of the source", () => {

@@ -4,6 +4,8 @@ export interface TaskNodeInput {
 	id: string;
 	role: string;
 	deps?: string[];
+	/** Extra dispatch attempts the node gets after a failed run. Default 0. */
+	retries?: number;
 }
 
 /**
@@ -19,16 +21,51 @@ export class TaskDag {
 			throw new Error(`Task "${input.id}" already exists`);
 		}
 		const node: TaskNode = { id: input.id, role: input.role, deps: input.deps?.slice() ?? [], status: "idle" };
+		if (input.retries !== undefined) node.retries = input.retries;
 		this.nodes.set(input.id, node);
-		return node;
+		return this.snapshot(node);
 	}
 
 	get(id: string): TaskNode | undefined {
-		return this.nodes.get(id);
+		const node = this.nodes.get(id);
+		return node ? this.snapshot(node) : undefined;
 	}
 
 	all(): TaskNode[] {
-		return [...this.nodes.values()];
+		return [...this.nodes.values()].map((node) => this.snapshot(node));
+	}
+
+	/**
+	 * Frozen copy handed to external callers, so the dag's internal node state is
+	 * never held as a live mutable reference: writing to a returned node throws
+	 * (strict mode), and its `deps`/`results` arrays are sliced so they can't be
+	 * spliced into either. (The AgentMessage objects inside `results` are shared
+	 * by reference — they are treated as immutable agent output.) All mutation
+	 * goes through the dag's own methods (markRunning, markDone, setOutput,
+	 * incrementAttempts, …).
+	 */
+	private snapshot(node: TaskNode): TaskNode {
+		const copy: TaskNode = { ...node, deps: node.deps.slice() };
+		if (node.results) copy.results = node.results.slice();
+		return Object.freeze(copy);
+	}
+
+	/**
+	 * Record a settled node's final assistant text, injected into dependents'
+	 * prompts. Clearing it (undefined) removes the field rather than storing an
+	 * explicit `undefined`, keeping the node's serialized shape stable.
+	 */
+	setOutput(id: string, output: string | undefined): void {
+		const node = this.require(id);
+		if (output === undefined) delete node.output;
+		else node.output = output;
+	}
+
+	/** Count one more failed/reworked attempt against a node and return the new total. */
+	incrementAttempts(id: string): number {
+		const node = this.require(id);
+		node.attempts = (node.attempts ?? 0) + 1;
+		return node.attempts;
 	}
 
 	/** Kahn's algorithm. Throws on unknown deps or cycles. */
@@ -69,9 +106,9 @@ export class TaskDag {
 
 	/** Nodes that are idle and whose dependencies are all done. */
 	ready(): TaskNode[] {
-		return this.all().filter(
-			(node) => node.status === "idle" && node.deps.every((dep) => this.nodes.get(dep)?.status === "done"),
-		);
+		return [...this.nodes.values()]
+			.filter((node) => node.status === "idle" && node.deps.every((dep) => this.nodes.get(dep)?.status === "done"))
+			.map((node) => this.snapshot(node));
 	}
 
 	/** Mark a node as dispatched so ready() stops returning it. */
@@ -88,7 +125,8 @@ export class TaskDag {
 		const node = this.require(id);
 		const readyBefore = new Set(this.ready().map((other) => other.id));
 		node.status = "done";
-		node.results = results;
+		if (results === undefined) delete node.results;
+		else node.results = results;
 		return this.ready().filter((other) => !readyBefore.has(other.id));
 	}
 
@@ -105,9 +143,22 @@ export class TaskDag {
 		this.require(id).status = "paused";
 	}
 
+	/**
+	 * Send a settled node back to "idle" so ready() re-dispatches it, clearing
+	 * the previous attempt's results and output (but not its attempt count).
+	 * Used for retries and validator-triggered reruns.
+	 */
+	resetToIdle(id: string): TaskNode {
+		const node = this.require(id);
+		node.status = "idle";
+		delete node.results;
+		delete node.output;
+		return this.snapshot(node);
+	}
+
 	/** Nodes that can never run because a transitive dependency failed. */
 	blocked(): TaskNode[] {
-		const failed = new Set(this.all().filter((node) => node.status === "error").map((node) => node.id));
+		const failed = new Set([...this.nodes.values()].filter((node) => node.status === "error").map((node) => node.id));
 		if (failed.size === 0) return [];
 		const blocked: TaskNode[] = [];
 		for (const id of this.topologicalOrder()) {
@@ -115,7 +166,7 @@ export class TaskDag {
 			if (node.status === "error") continue;
 			if (node.deps.some((dep) => failed.has(dep))) {
 				failed.add(node.id);
-				blocked.push(node);
+				blocked.push(this.snapshot(node));
 			}
 		}
 		return blocked;
@@ -124,7 +175,7 @@ export class TaskDag {
 	/** True when every node is done, failed, or permanently blocked. */
 	isComplete(): boolean {
 		const blockedIds = new Set(this.blocked().map((node) => node.id));
-		return this.all().every(
+		return [...this.nodes.values()].every(
 			(node) => node.status === "done" || node.status === "error" || blockedIds.has(node.id),
 		);
 	}
@@ -152,7 +203,7 @@ export class TaskDag {
 		for (const node of this.nodes.values()) {
 			if (node.status === "thinking" || node.status === "streaming" || node.status === "tool") {
 				node.status = "idle";
-				reset.push(node);
+				reset.push(this.snapshot(node));
 			}
 		}
 		return reset;

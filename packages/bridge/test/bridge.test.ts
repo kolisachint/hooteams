@@ -311,7 +311,28 @@ describe("POST /runs", () => {
 		expect((await post(base, { tasks: [{ id: "a" }] })).status).toBe(400);
 		expect((await post(base, { tasks: [{ id: "a", role: "ops", prompt: 7 }] })).status).toBe(400);
 		expect((await post(base, { tasks: [{ id: "a", role: "ops", deps: [1] }] })).status).toBe(400);
+		expect((await post(base, { tasks: [{ id: "a", role: "ops", retries: -1 }] })).status).toBe(400);
+		expect((await post(base, { tasks: [{ id: "a", role: "ops", retries: 1.5 }] })).status).toBe(400);
+		expect((await post(base, { tasks: [{ id: "a", role: "ops" }], goal: 7 })).status).toBe(400);
+		expect((await post(base, { tasks: [{ id: "a", role: "ops" }], roles: [{ role: "ops" }] })).status).toBe(400);
 		expect(calls).toBe(0);
+	});
+
+	test("goal, per-run roles, and retries pass through to the handler", async () => {
+		const received: StartRunRequest[] = [];
+		const { base } = startServer({
+			startRun: async (request) => {
+				received.push(request);
+				return { runId: "run-43" };
+			},
+		});
+		const body = {
+			goal: "ship the haiku",
+			roles: [{ role: "poet", systemPrompt: "write poems", model: "claude-sonnet-4-5" }],
+			tasks: [{ id: "a", role: "poet", prompt: "go", retries: 2 }],
+		};
+		expect((await post(base, body)).status).toBe(202);
+		expect(received).toEqual([body]);
 	});
 
 	test("RunRejectedError surfaces with its status; other errors 500", async () => {

@@ -22,6 +22,19 @@ export interface ServerConfig {
 	 * docs/hitl-gates.md.
 	 */
 	allowAutonomous?: boolean;
+	/** Cross-run shared team memory. Defaults to true; set false to disable. */
+	memory?: boolean;
+	/** Root for the per-project memory stores. Defaults to ~/.hooteams/memory. */
+	memoryRoot?: string;
+	/** Project the memory store is scoped to. Defaults to a key derived from the server's cwd. */
+	project?: string;
+	/**
+	 * System prompt for a goal-completion validator. When set, every run that
+	 * completes cleanly is reviewed by a validator agent (using defaults.model
+	 * or the first team role's model); an unmet verdict sends the named task
+	 * back for rework before the run settles.
+	 */
+	validator?: string;
 }
 
 export const DEFAULT_PORT = 4242;
@@ -37,6 +50,10 @@ export interface RawServerConfig {
 	sessionsRoot?: string;
 	resumeInterrupted?: boolean;
 	allowAutonomous?: boolean;
+	memory?: boolean;
+	memoryRoot?: string;
+	project?: string;
+	validator?: string;
 }
 
 /**
@@ -86,6 +103,18 @@ export function validateConfig(raw: RawServerConfig, source: string): ServerConf
 	if (raw.sessionsRoot !== undefined && typeof raw.sessionsRoot !== "string") {
 		throw new Error(`${source}: "sessionsRoot" must be a string`);
 	}
+	if (raw.memory !== undefined && typeof raw.memory !== "boolean") {
+		throw new Error(`${source}: "memory" must be a boolean`);
+	}
+	if (raw.memoryRoot !== undefined && typeof raw.memoryRoot !== "string") {
+		throw new Error(`${source}: "memoryRoot" must be a string`);
+	}
+	if (raw.project !== undefined && typeof raw.project !== "string") {
+		throw new Error(`${source}: "project" must be a string`);
+	}
+	if (raw.validator !== undefined && typeof raw.validator !== "string") {
+		throw new Error(`${source}: "validator" must be a string (the validator agent's system prompt)`);
+	}
 	return {
 		defaults: raw.defaults,
 		team,
@@ -94,5 +123,9 @@ export function validateConfig(raw: RawServerConfig, source: string): ServerConf
 		sessionsRoot: raw.sessionsRoot,
 		resumeInterrupted: raw.resumeInterrupted === true,
 		allowAutonomous: raw.allowAutonomous === true,
+		memory: raw.memory,
+		memoryRoot: raw.memoryRoot,
+		project: raw.project,
+		validator: raw.validator,
 	};
 }

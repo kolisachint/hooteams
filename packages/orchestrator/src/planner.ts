@@ -1,8 +1,10 @@
-import { Agent, type AgentTool, type StreamFn } from "@kolisachint/hoocode-agent-core";
+import { Agent, type AgentMessage, type AgentTool, type StreamFn } from "@kolisachint/hoocode-agent-core";
 import { getModel, type Model, Type } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
-import type { TaskDag } from "./dag.js";
+import type { TaskDag } from "@kolisachint/hooteams-dag";
+import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import type { Team } from "./team.js";
+import { extractMessageText } from "./team-orchestrator.js";
 import type { RoleConfig, ThinkingLevel } from "./types.js";
 
 const spawnAgentParams = Type.Object({
@@ -15,6 +17,14 @@ const spawnAgentParams = Type.Object({
 		Type.String({
 			description: "Task id to register this worker under in the team's task DAG, so progress is tracked by task rather than role",
 		}),
+	),
+	deps: Type.Optional(
+		Type.Array(Type.String(), {
+			description: "Ids of tasks that must finish before this agent's task starts; their outputs are passed into its prompt",
+		}),
+	),
+	retries: Type.Optional(
+		Type.Number({ description: "Extra attempts the task gets if its run fails, before the failure is escalated" }),
 	),
 	defaultTools: Type.Optional(
 		Type.Boolean({
@@ -57,7 +67,7 @@ export function createSpawnAgentTool(team: Team, dag?: TaskDag): AgentTool<typeo
 			};
 			const agent = await team.spawnAsync(config);
 			if (dag && params.taskId && !dag.get(params.taskId)) {
-				dag.add({ id: params.taskId, role: params.role });
+				dag.add({ id: params.taskId, role: params.role, deps: params.deps, retries: params.retries });
 			}
 			if (params.task) {
 				if (dag && params.taskId) {
@@ -116,6 +126,202 @@ export function createDelegateTaskTool(team: Team): AgentTool<typeof delegateTas
 	};
 }
 
+const askAgentParams = Type.Object({
+	role: Type.String({ description: "Role of the team member to ask" }),
+	question: Type.String({ description: "The question; the agent's next completed reply is returned as the answer" }),
+	timeoutSeconds: Type.Optional(Type.Number({ description: "How long to wait for the answer. Default 120" })),
+});
+
+export interface AskAgentOptions {
+	/**
+	 * Role of the asking agent. Asking your own role is rejected: the answer
+	 * could never arrive while this run blocks waiting for it.
+	 */
+	selfRole?: string;
+	/** Default seconds to wait for the target's reply. Default 120. */
+	defaultTimeoutSeconds?: number;
+}
+
+/**
+ * Request-response messaging between agents: steer `question` into the agent
+ * registered under `role` and resolve with the final assistant text of its
+ * next completed run (its next agent_end on the team channel). Rejects on a
+ * team_error for the role, or when timeoutMs elapses first. Pass timeoutMs 0
+ * to wait indefinitely.
+ */
+export function askAgent(team: Team, role: string, question: string, timeoutMs = 120_000): Promise<string> {
+	return new Promise<string>((resolve, reject) => {
+		let settled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let unsubscribe = () => {};
+		const settle = (apply: () => void): void => {
+			if (settled) return;
+			settled = true;
+			unsubscribe();
+			if (timer !== undefined) clearTimeout(timer);
+			apply();
+		};
+		// Subscribe before steering so an answer that lands immediately can't be missed.
+		unsubscribe = team.channel.subscribe((event) => {
+			if (event.type === "agent_end") {
+				settle(() => resolve(lastAssistantText(event.messages)));
+			} else if (event.type === "team_error") {
+				settle(() => reject(new Error(`Agent "${role}" failed while answering: ${event.error}`)));
+			}
+		}, role);
+		if (timeoutMs > 0) {
+			timer = setTimeout(
+				() => settle(() => reject(new Error(`Timed out after ${timeoutMs}ms waiting for "${role}" to answer`))),
+				timeoutMs,
+			);
+		}
+		try {
+			team.steer(role, question);
+		} catch (err) {
+			settle(() => reject(err instanceof Error ? err : new Error(String(err))));
+		}
+	});
+}
+
+/** Text of the last assistant message in a run's transcript ("" when there is none). */
+function lastAssistantText(messages: AgentMessage[]): string {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i]!;
+		if (message.role === "assistant") return extractMessageText(message);
+	}
+	return "";
+}
+
+/**
+ * Tool that lets an agent ask a named team member a question and wait for the
+ * answer — the request-response counterpart to fire-and-forget delegate_task.
+ * The caller's run blocks inside the tool call until the target's next
+ * agent_end fires, so the answer is in hand before the caller continues.
+ */
+export function createAskAgentTool(team: Team, options: AskAgentOptions = {}): AgentTool<typeof askAgentParams> {
+	return {
+		name: "ask_agent",
+		label: "Ask Agent",
+		description:
+			"Ask an existing team member a question and wait for its answer. The question is steered into " +
+			"the target agent and the final text of its next completed run is returned. Unlike delegate_task " +
+			"this blocks until the answer arrives — use it when you need the answer before continuing.",
+		parameters: askAgentParams,
+		execute: async (_toolCallId, params) => {
+			if (!team.has(params.role)) {
+				const roles = team.roles();
+				throw new Error(
+					`No agent for role "${params.role}". Available roles: ${roles.length > 0 ? roles.join(", ") : "(none — spawn one first)"}`,
+				);
+			}
+			if (options.selfRole !== undefined && params.role === options.selfRole) {
+				throw new Error(
+					`Cannot ask your own role "${params.role}" — the answer could never arrive while this run waits for it. Answer it yourself or ask another role.`,
+				);
+			}
+			const timeoutMs = (params.timeoutSeconds ?? options.defaultTimeoutSeconds ?? 120) * 1000;
+			const answer = await askAgent(team, params.role, params.question, timeoutMs);
+			return {
+				content: [{ type: "text", text: answer.length > 0 ? answer : `Agent "${params.role}" finished without a text reply.` }],
+				details: { role: params.role, answered: answer.length > 0 },
+			};
+		},
+	};
+}
+
+/** One task of a dry-run plan, shaped like a POST /runs task (and tasks.json). */
+export interface PlannedTask {
+	id: string;
+	role: string;
+	prompt?: string;
+	deps?: string[];
+	retries?: number;
+}
+
+/**
+ * What a dry-run planning pass produces: the role configs the planner would
+ * have spawned and the task graph it would have dispatched. Serializable as a
+ * tasks.json that `hooteams run` accepts directly.
+ */
+export interface PlanBuffer {
+	roles: RoleConfig[];
+	tasks: PlannedTask[];
+}
+
+/** A task id not yet used in the buffer, derived from the preferred id. */
+function freeTaskId(buffer: PlanBuffer, preferred: string): string {
+	if (!buffer.tasks.some((task) => task.id === preferred)) return preferred;
+	let n = 2;
+	while (buffer.tasks.some((task) => task.id === `${preferred}-${n}`)) n++;
+	return `${preferred}-${n}`;
+}
+
+/**
+ * Dry-run twin of createSpawnAgentTool: records the role config and task in
+ * the plan buffer instead of spawning anything, so the plan can be inspected
+ * (and approved) before a single agent runs.
+ */
+export function createPlanSpawnAgentTool(buffer: PlanBuffer): AgentTool<typeof spawnAgentParams> {
+	return {
+		name: "spawn_agent",
+		label: "Plan Agent",
+		description:
+			"Record a new team agent in the plan: role, system prompt, model, and optionally its first task. " +
+			"Nothing is spawned — this is a dry run. Give every task a taskId, a concrete task, and deps listing " +
+			"the task ids whose results it needs.",
+		parameters: spawnAgentParams,
+		execute: async (_toolCallId, params) => {
+			if (!buffer.roles.some((role) => role.role === params.role)) {
+				buffer.roles.push({
+					role: params.role,
+					systemPrompt: params.systemPrompt,
+					model: params.model,
+					provider: params.provider,
+					defaultTools: params.defaultTools,
+					mcpConfigPath: params.mcpConfigPath,
+					cwd: params.cwd,
+				});
+			}
+			let taskId: string | undefined;
+			if (params.task || params.taskId) {
+				taskId = freeTaskId(buffer, params.taskId ?? params.role);
+				buffer.tasks.push({ id: taskId, role: params.role, prompt: params.task, deps: params.deps, retries: params.retries });
+			}
+			const note = taskId ? ` with task "${taskId}"` : "";
+			return {
+				content: [{ type: "text", text: `Planned agent "${params.role}" (${params.model})${note}. Nothing was spawned (dry run).` }],
+				details: { role: params.role, model: params.model, taskId, dryRun: true },
+			};
+		},
+	};
+}
+
+/** Dry-run twin of createDelegateTaskTool: appends a task for an already-planned role. */
+export function createPlanDelegateTaskTool(buffer: PlanBuffer): AgentTool<typeof delegateTaskParams> {
+	return {
+		name: "delegate_task",
+		label: "Plan Task",
+		description:
+			"Record an extra task for a role already in the plan. Nothing runs — this is a dry run. " +
+			"Prefer spawn_agent with taskId/deps so the task's dependencies are explicit.",
+		parameters: delegateTaskParams,
+		execute: async (_toolCallId, params) => {
+			if (!buffer.roles.some((role) => role.role === params.role)) {
+				const roles = buffer.roles.map((role) => role.role);
+				throw new Error(
+					`No planned agent for role "${params.role}". Planned roles: ${roles.length > 0 ? roles.join(", ") : "(none — plan one with spawn_agent first)"}`,
+				);
+			}
+			const taskId = freeTaskId(buffer, params.role);
+			buffer.tasks.push({ id: taskId, role: params.role, prompt: params.task });
+			return {
+				content: [{ type: "text", text: `Planned task "${taskId}" for "${params.role}" (dry run).` }],
+				details: { role: params.role, taskId, dryRun: true },
+			};
+		},
+	};
+}
+
 export interface PlannerOptions {
 	team: Team;
 	systemPrompt?: string;
@@ -126,6 +332,18 @@ export interface PlannerOptions {
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	/** Extra tools beyond spawn_agent. */
 	tools?: AgentTool<any>[];
+	/**
+	 * Project-scoped shared memory. A live planner gets memory_read and
+	 * memory_write tools backed by this store (ignored in dryRun mode, which
+	 * must not leave side effects).
+	 */
+	memory?: TeamMemory;
+	/**
+	 * Plan without executing: spawn_agent and delegate_task write to
+	 * `planBuffer` instead of touching the team, so the plan can be inspected
+	 * (and run later via tasks.json / POST /runs) before any agent starts.
+	 */
+	dryRun?: boolean;
 }
 
 const DEFAULT_PLANNER_PROMPT = `You are the planner of a team of AI agents.
@@ -133,7 +351,18 @@ Break the user's goal into tasks, spawn specialist agents with the spawn_agent t
 and give each a focused system prompt and an initial task. Keep roles small and composable.
 Workers that must touch code or run commands need tools: pass defaultTools: true for the
 built-in coding tools (bash/read/edit/write/grep/find/ls), cwd to set their working
-directory, and mcpConfigPath to add tools from an mcp.json file.`;
+directory, and mcpConfigPath to add tools from an mcp.json file.
+Use delegate_task to hand off work without waiting, and ask_agent when you need a team
+member's answer before continuing. When memory_read/memory_write are available, check the
+team's shared memory for prior-run context before planning, and record decisions worth
+keeping.`;
+
+const DRY_RUN_ADDENDUM = `
+
+You are in planning mode: spawn_agent and delegate_task record a plan instead of starting
+agents — nothing executes. Cover the whole goal. Give every agent a taskId, a concrete
+task, and deps listing the task ids whose results it needs; add retries for tasks likely
+to be flaky. When the plan covers the goal, summarize it briefly and stop.`;
 
 export const PLANNER_ROLE = "planner";
 
@@ -143,19 +372,30 @@ export const PLANNER_ROLE = "planner";
  */
 export class Planner {
 	readonly agent: Agent;
+	/** Where a dryRun planner's plan accumulates; undefined in live mode. */
+	readonly planBuffer?: PlanBuffer;
 
 	constructor(options: PlannerOptions) {
 		const model = options.model ?? getModel("anthropic", "claude-sonnet-4-5");
-		this.agent = new Agent({
-			initialState: {
-				systemPrompt: options.systemPrompt ?? DEFAULT_PLANNER_PROMPT,
-				model,
-				thinkingLevel: options.thinkingLevel ?? "off",
-				tools: [
+		if (options.dryRun) {
+			this.planBuffer = { roles: [], tasks: [] };
+		}
+		const teamTools: AgentTool<any>[] = this.planBuffer
+			? [createPlanSpawnAgentTool(this.planBuffer), createPlanDelegateTaskTool(this.planBuffer)]
+			: [
 					createSpawnAgentTool(options.team),
 					createDelegateTaskTool(options.team),
-					...(options.tools ?? []),
-				],
+					createAskAgentTool(options.team, { selfRole: PLANNER_ROLE }),
+				];
+		if (!options.dryRun && options.memory) {
+			teamTools.push(createMemoryReadTool(options.memory), createMemoryWriteTool(options.memory, { role: PLANNER_ROLE }));
+		}
+		this.agent = new Agent({
+			initialState: {
+				systemPrompt: (options.systemPrompt ?? DEFAULT_PLANNER_PROMPT) + (options.dryRun ? DRY_RUN_ADDENDUM : ""),
+				model,
+				thinkingLevel: options.thinkingLevel ?? "off",
+				tools: [...teamTools, ...(options.tools ?? [])],
 			},
 			streamFn: options.streamFn,
 			getApiKey: options.getApiKey,

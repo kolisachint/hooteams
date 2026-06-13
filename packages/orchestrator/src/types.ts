@@ -1,4 +1,5 @@
 import type { AgentEvent, AgentMessage, AgentTool, ThinkingLevel } from "@kolisachint/hoocode-agent-core";
+import type { AgentStatus, SerializedDag, TaskNode } from "@kolisachint/hooteams-dag";
 
 /**
  * Synthetic event published by the Team when starting or resuming an agent's
@@ -42,6 +43,22 @@ export interface TaskStartedEvent {
 	ts: number;
 }
 
+/**
+ * A settled node is being re-dispatched: a failed run consuming one of its
+ * retries, or a validator verdict sending a "done" task back for rework.
+ */
+export interface TaskRetriedEvent {
+	type: "task_retried";
+	taskId: string;
+	role: string;
+	agentId: string;
+	/** Failed attempts consumed so far, counting this one. */
+	attempt: number;
+	/** What sent the task back: the run error or the validator's reason. */
+	error: string;
+	ts: number;
+}
+
 /** A dag node settled as done or error. */
 export interface TaskFinishedEvent {
 	type: "task_finished";
@@ -77,22 +94,9 @@ export type TeamEvent =
 	| TaskPausedEvent
 	| TaskResumedEvent
 	| TaskStartedEvent
+	| TaskRetriedEvent
 	| TaskFinishedEvent
 	| DagSettledEvent;
-
-/** Coarse per-agent status derived from the event stream. */
-export type AgentStatus = "idle" | "thinking" | "streaming" | "tool" | "done" | "error" | "paused";
-
-/** One unit of work in the team DAG, executed by the agent registered under `role`. */
-export interface TaskNode {
-	id: string;
-	role: string;
-	/** Ids of nodes that must reach "done" before this node becomes ready. */
-	deps: string[];
-	status: AgentStatus;
-	/** Messages produced by the node's run, recorded by markDone. */
-	results?: AgentMessage[];
-}
 
 /** Configuration for a single team member. */
 export interface RoleConfig {
@@ -116,10 +120,13 @@ export interface RoleConfig {
 export interface TeamConfig {
 	roles: RoleConfig[];
 	maxConcurrent?: number;
+	/**
+	 * System prompt for a goal-completion validator. When set, a validator
+	 * agent reviews the goal and every task's output after the dag completes,
+	 * and an unmet verdict sends the named task back for rework.
+	 */
+	validator?: string;
 }
-
-/** Shape of TaskDag.toJSON(), as persisted in "dag_state" session entries. */
-export type SerializedDag = Record<string, TaskNode>;
 
 /** One approval gate a task went through, reconstructed from session entries. */
 export interface TraceApproval {
@@ -154,3 +161,4 @@ export interface TraceRun {
 }
 
 export type { AgentEvent, AgentMessage, AgentTool, ThinkingLevel };
+export type { AgentStatus, SerializedDag, TaskNode };

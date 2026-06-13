@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 import { loadConfig, startServer } from "@kolisachint/hooteams-server";
-import { attach, nudge, pending, resume, run, status, stop } from "./commands.js";
+import { attach, nudge, pending, plan, resume, run, status, stop } from "./commands.js";
 
 const USAGE = `hooteams — multi-agent orchestration for hoocode
 
 Usage:
   hooteams start  [--config path] [--port 4242] [--resume] [--allow-autonomous]
                                                            start the team server
+  hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
   hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
   hooteams pending [--host …]                               list approval gates awaiting an answer
   hooteams resume <taskId> "<option>" [--feedback "…"]      answer an approval gate
@@ -20,6 +21,8 @@ Options:
   --resume   restore and continue an interrupted run on startup
   --allow-autonomous  skip the human-in-the-loop completion gate (HITL is on by default)
   --detach   print the run id and exit instead of following the run
+  --out      write the dry-run plan to this file (hooteams run accepts it)
+  --model    planner model id for hooteams plan (default claude-sonnet-4-5)
 `;
 
 const args = process.argv.slice(2);
@@ -63,6 +66,12 @@ try {
 			};
 			process.on("SIGINT", () => void shutdown());
 			process.on("SIGTERM", () => void shutdown());
+			break;
+		}
+		case "plan": {
+			const goal = positional(0);
+			if (!goal) throw new Error('Usage: hooteams plan "<goal>" [--out tasks.json] [--model id] [--provider p]');
+			await plan(goal, readFlag("out"), readFlag("model"), readFlag("provider"));
 			break;
 		}
 		case "run": {

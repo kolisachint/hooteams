@@ -1,3 +1,4 @@
+import { createHoocodeAuth, getModel, Planner, Team, TeamChannel } from "@kolisachint/hooteams-orchestrator";
 import { createInterface } from "node:readline/promises";
 import { StreamRenderer } from "./render.js";
 import { consumeSSE } from "./sse.js";
@@ -70,6 +71,9 @@ export async function run(host: string, file: string, follow: boolean): Promise<
 				case "task_resumed":
 					console.log(`▶ ${event.taskId} resumed with "${event.chosenOption}"`);
 					break;
+				case "task_retried":
+					console.log(`↻ ${event.taskId} retrying (attempt ${event.attempt}): ${event.error}`);
+					break;
 				case "task_finished":
 					console.log(`${event.status === "done" ? "✓" : "✗"} ${event.taskId} ${event.status}`);
 					break;
@@ -85,6 +89,45 @@ export async function run(host: string, file: string, follow: boolean): Promise<
 		controller.signal,
 	);
 	if (failed) process.exit(1);
+}
+
+/**
+ * Run the planner in dry-run mode against a goal: spawn_agent/delegate_task
+ * record a plan instead of starting agents, so the task graph can be reviewed
+ * before anything runs. Prints the plan; with --out, writes a tasks.json that
+ * `hooteams run` accepts directly (the file carries goal + roles + tasks, and
+ * the server merges the plan's roles into the team for that run).
+ */
+export async function plan(goal: string, outFile?: string, modelId?: string, provider?: string): Promise<void> {
+	const channel = new TeamChannel();
+	const getApiKey = createHoocodeAuth();
+	const team = new Team(channel, { getApiKey });
+	const renderer = new StreamRenderer();
+	channel.subscribe((event) => renderer.render(event));
+	const planner = new Planner({
+		team,
+		dryRun: true,
+		getApiKey,
+		model: modelId ? getModel((provider ?? "anthropic") as any, modelId as any) : undefined,
+	});
+	await planner.plan(goal);
+	const buffer = planner.planBuffer!;
+	if (buffer.tasks.length === 0) {
+		console.log("\nthe planner produced no tasks");
+		return;
+	}
+	console.log(`\nplan: ${buffer.roles.length} role(s), ${buffer.tasks.length} task(s)`);
+	for (const task of buffer.tasks) {
+		const after = task.deps && task.deps.length > 0 ? ` (after ${task.deps.join(", ")})` : "";
+		console.log(`  ${task.id} → ${task.role}${after}`);
+	}
+	const document = `${JSON.stringify({ goal, roles: buffer.roles, tasks: buffer.tasks }, null, "\t")}\n`;
+	if (outFile) {
+		await Bun.write(outFile, document);
+		console.log(`\nwrote ${outFile} — review it, then start the run with: hooteams run ${outFile}`);
+	} else {
+		console.log(`\n${document}`);
+	}
 }
 
 /** List the active run's unanswered approval gates. */
