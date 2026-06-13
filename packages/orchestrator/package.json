@@ -1,6 +1,6 @@
 {
 	"name": "@kolisachint/hooteams-orchestrator",
-	"version": "0.1.14",
+	"version": "0.1.15",
 	"description": "Multi-agent team orchestration on top of hoocode agents: DAG dispatch, planner, agent registry, tagged event channel",
 	"type": "module",
 	"main": "./src/index.ts",
