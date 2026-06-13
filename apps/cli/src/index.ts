@@ -5,7 +5,8 @@ import { attach, nudge, pending, plan, resume, run, status, stop } from "./comma
 const USAGE = `hooteams — multi-agent orchestration for hoocode
 
 Usage:
-  hooteams start  [--config path] [--port 4242] [--resume]  start the team server
+  hooteams start  [--config path] [--port 4242] [--resume] [--allow-autonomous]
+                                                           start the team server
   hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
   hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
   hooteams pending [--host …]                               list approval gates awaiting an answer
@@ -18,6 +19,7 @@ Usage:
 Options:
   --host     bridge base URL (default http://localhost:4242)
   --resume   restore and continue an interrupted run on startup
+  --allow-autonomous  skip the human-in-the-loop completion gate (HITL is on by default)
   --detach   print the run id and exit instead of following the run
   --out      write the dry-run plan to this file (hooteams run accepts it)
   --model    planner model id for hooteams plan (default claude-sonnet-4-5)
@@ -54,6 +56,7 @@ try {
 			const running = startServer(config, {
 				port: portFlag ? Number(portFlag) : undefined,
 				resumeInterrupted: args.includes("--resume") || undefined,
+				allowAutonomous: args.includes("--allow-autonomous") || undefined,
 			});
 			console.log(`hooteams server listening on http://localhost:${running.port}`);
 			if (config.team.length > 0) console.log(`team: ${config.team.map((role) => role.role).join(", ")}`);

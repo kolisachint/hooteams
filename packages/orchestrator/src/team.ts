@@ -186,8 +186,21 @@ export class Team {
 					member.status = "error";
 				}
 				break;
+			case "task_paused":
+				// An approval gate ends the agent's run but the member is waiting on a
+				// human, not done. This must win over the agent_end that the harness
+				// publishes right after (see the guard below).
+				member.status = "paused";
+				break;
+			case "task_resumed":
+				// The answer arrived; the node runs again. agent_start/turn_start will
+				// refine this, but never leave a resumed member stuck on "paused".
+				member.status = "thinking";
+				break;
 			case "agent_end":
-				if (member.status !== "error") {
+				// A run that ended on an approval gate stays "paused" until task_resumed;
+				// agent_end (mirrored right after task_paused) must not clobber it.
+				if (member.status !== "error" && member.status !== "paused") {
 					member.status = "done";
 				}
 				break;

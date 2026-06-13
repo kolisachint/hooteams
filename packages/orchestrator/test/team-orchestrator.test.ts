@@ -213,12 +213,72 @@ describe("TeamOrchestrator", () => {
 
 		const requests = await customEntries(session, "approval_request");
 		expect(requests).toEqual([
-			{ runId: orchestrator.runId, taskId: "deploy", question: "Deploy to prod?", options: ["yes", "no"], ts: expect.any(Number) },
+			{
+				runId: orchestrator.runId,
+				taskId: "deploy",
+				question: "Deploy to prod?",
+				options: ["yes", "no"],
+				kind: "marker",
+				ts: expect.any(Number),
+			},
 		]);
 		const responses = await customEntries(session, "approval_response");
 		expect(responses).toEqual([{ runId: orchestrator.runId, taskId: "deploy", chosenOption: "yes\nship it", ts: expect.any(Number) }]);
 		const display = (await session.getEntries()).find((entry) => entry.type === "custom_message");
 		expect(display).toMatchObject({ display: true });
+	});
+
+	test("HITL completion gate: pauses before settling done; approve settles without re-prompting", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "build", role: "coder" });
+		const { fakes, createHarness } = fixture(); // sayAndFinish: a clean run end
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+		const paused = once(channel, "task_paused");
+
+		const orchestrator = new TeamOrchestrator(dag, { session, channel, createHarness, allowAutonomous: false });
+		const run = orchestrator.run();
+
+		const gate = await paused;
+		expect(gate).toMatchObject({ taskId: "build", role: "coder", options: ["approve", "revise"] });
+		expect(dag.get("build")?.status).toBe("paused");
+
+		expect(orchestrator.resume("build", "approve")).toBe(true);
+		await run;
+
+		expect(dag.get("build")?.status).toBe("done");
+		// approve must not re-prompt: the agent ran exactly once.
+		expect(fakes.get("build")?.prompts).toEqual(["build"]);
+		expect(events.at(-1)?.type).toBe("dag_complete");
+		const requests = await customEntries(session, "approval_request");
+		expect(requests[0]).toMatchObject({ taskId: "build", kind: "completion", options: ["approve", "revise"] });
+	});
+
+	test("HITL completion gate: revise re-prompts with feedback, then approve settles", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "build", role: "coder" });
+		const { fakes, createHarness } = fixture(); // each run ends cleanly -> a gate re-opens
+		const channel = new TeamChannel();
+
+		const orchestrator = new TeamOrchestrator(dag, { session, channel, createHarness, allowAutonomous: false });
+		const firstGate = once(channel, "task_paused");
+		const run = orchestrator.run();
+		await firstGate;
+
+		// revise + feedback re-prompts the agent and re-opens the gate when it settles.
+		const secondGate = once(channel, "task_paused");
+		expect(orchestrator.resume("build", "revise", "add error handling")).toBe(true);
+		await secondGate;
+
+		expect(orchestrator.resume("build", "approve")).toBe(true);
+		await run;
+
+		expect(dag.get("build")?.status).toBe("done");
+		// the run had ended, so revise starts a fresh prompt carrying just the feedback.
+		expect(fakes.get("build")?.prompts).toEqual(["build", "add error handling"]);
 	});
 
 	test("steers the live run when the marker arrived mid-run", async () => {

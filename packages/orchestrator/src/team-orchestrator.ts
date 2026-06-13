@@ -86,6 +86,13 @@ export interface TeamOrchestratorOptions {
 	 */
 	taskPrompt?: (node: TaskNode) => string;
 	/**
+	 * When false, the orchestrator opens a deterministic completion gate before
+	 * each node settles "done" (human-in-the-loop). Defaults to true (autonomous)
+	 * so the library stays backward-compatible; the server/CLI default it to
+	 * false so `hooteams start` is HITL by default. See docs/hitl-gates.md.
+	 */
+	allowAutonomous?: boolean;
+	/**
 	 * Called when a node fails permanently (its retries are exhausted). Hosts
 	 * use this to escalate structurally, e.g. steering the failure summary to
 	 * a planner agent that can spawn a recovery specialist or re-delegate.
@@ -186,6 +193,7 @@ export class TeamOrchestrator {
 	private readonly maxConcurrent: number;
 	private readonly createHarness: (node: TaskNode) => NodeHandle | Promise<NodeHandle>;
 	private readonly taskPrompt: (node: TaskNode) => string;
+	private readonly allowAutonomous: boolean;
 	private readonly onTaskFailed?: (node: TaskNode, error: string) => void;
 	private readonly validator?: RunValidator;
 	private readonly memory?: RunMemory;
@@ -195,6 +203,8 @@ export class TeamOrchestrator {
 	/** True while a validation pass is in flight; blocks settlement. */
 	private validating = false;
 	private readonly active = new Map<string, ActiveNode>();
+	/** Task ids whose current gate is an end-of-task completion gate (vs a marker gate). */
+	private readonly completionGates = new Set<string>();
 	/** Resumed tasks waiting for a free slot, answer text included. */
 	private readonly resumeQueue: { taskId: string; text: string }[] = [];
 	/** Gates restored from a previous run, re-surfaced on run(). */
@@ -214,6 +224,7 @@ export class TeamOrchestrator {
 		this.maxConcurrent = options.maxConcurrent ?? 4;
 		this.createHarness = options.createHarness;
 		this.taskPrompt = options.taskPrompt ?? ((node) => node.id);
+		this.allowAutonomous = options.allowAutonomous ?? true;
 		this.onTaskFailed = options.onTaskFailed;
 		this.validator = options.validator;
 		this.memory = options.memory;
@@ -305,6 +316,7 @@ export class TeamOrchestrator {
 		let snapshot: SerializedDag | undefined;
 		let runId = options.runId;
 		const pending = new Map<string, ApprovalRequest>();
+		const completionKinds = new Set<string>();
 		for (const entry of entries) {
 			if (entry.type !== "custom") continue;
 			const data = entry.data as Record<string, any> | undefined;
@@ -316,9 +328,12 @@ export class TeamOrchestrator {
 					break;
 				case "approval_request":
 					pending.set(data.taskId, { taskId: data.taskId, question: data.question, options: data.options });
+					if (data.kind === "completion") completionKinds.add(data.taskId);
+					else completionKinds.delete(data.taskId);
 					break;
 				case "approval_response":
 					pending.delete(data.taskId);
+					completionKinds.delete(data.taskId);
 					break;
 			}
 		}
@@ -329,6 +344,9 @@ export class TeamOrchestrator {
 		dag.resetTransient();
 		const orchestrator = new TeamOrchestrator(dag, { ...options, session, runId });
 		orchestrator.restoredApprovals = [...pending.values()].filter((request) => dag.get(request.taskId)?.status === "paused");
+		for (const taskId of completionKinds) {
+			if (dag.get(taskId)?.status === "paused") orchestrator.completionGates.add(taskId);
+		}
 		return orchestrator;
 	}
 
@@ -522,10 +540,26 @@ export class TeamOrchestrator {
 	}
 
 	private pauseNode(active: ActiveNode, question: string, options: string[]): void {
+		this.openGate(active, question, options, "marker");
+	}
+
+	/**
+	 * Open a completion gate before a node settles "done". HITL-active runs route
+	 * every clean run end through here so a human can approve or revise the output
+	 * without the agent having to emit an AWAITING_APPROVAL marker.
+	 */
+	private pauseForCompletion(active: ActiveNode): void {
+		const question = `Review the output of "${active.node.id}" before it is marked done.`;
+		this.openGate(active, question, ["approve", "revise"], "completion");
+	}
+
+	/** Shared gate body for marker and completion pauses; frees the node's slot. */
+	private openGate(active: ActiveNode, question: string, options: string[], kind: "marker" | "completion"): void {
 		const taskId = active.node.id;
 		active.paused = true;
 		this.dag.markPaused(taskId);
-		this.persist("approval_request", { runId: this.runId, taskId, question, options, ts: Date.now() });
+		if (kind === "completion") this.completionGates.add(taskId);
+		this.persist("approval_request", { runId: this.runId, taskId, question, options, kind, ts: Date.now() });
 		this.persistDisplay(`[${taskId}] ${question}\nOptions: ${options.join(", ")}`);
 		this.snapshotDag();
 		this.publish({
@@ -571,12 +605,17 @@ export class TeamOrchestrator {
 					chosenOption,
 					ts: Date.now(),
 				});
+				if (this.completionGates.delete(request.taskId)) {
+					this.resolveCompletionGate(request.taskId, chosenOption);
+					return;
+				}
 				this.resumeQueue.push({ taskId: request.taskId, text: chosenOption });
 				this.fill();
 			},
 			(err) => {
 				// Approval timed out with no default: the gate fails the node.
 				// The node holds no slot while paused.
+				this.completionGates.delete(request.taskId);
 				this.settleNode(request.taskId, true, { error: err, holdsSlot: false });
 			},
 		);
@@ -611,6 +650,27 @@ export class TeamOrchestrator {
 		this.startRun(active, text);
 	}
 
+	/**
+	 * Resolve a completion gate. "approve" settles the node done; anything else
+	 * ("revise", optionally with feedback on later lines) re-prompts the live
+	 * agent, which re-opens the gate when it settles again.
+	 */
+	private resolveCompletionGate(taskId: string, chosenOption: string): void {
+		const [head, ...rest] = chosenOption.split("\n");
+		const decision = (head ?? "").trim().toLowerCase();
+		if (decision.startsWith("approve")) {
+			const active = this.active.get(taskId);
+			// The gate already released the node's slot; settle without double-freeing.
+			this.settleNode(taskId, false, { messages: active?.lastMessages, holdsSlot: false });
+			return;
+		}
+		// "revise": re-prompt with the feedback. fill() reclaims the freed slot.
+		const feedback = rest.join("\n").trim();
+		const text = feedback.length > 0 ? feedback : "Please revise your previous work and try again.";
+		this.resumeQueue.push({ taskId, text });
+		this.fill();
+	}
+
 	private onRunSettled(active: ActiveNode, err?: unknown): void {
 		if (active.paused) {
 			// The run ended on the approval marker; resumeNode starts the next
@@ -624,6 +684,13 @@ export class TeamOrchestrator {
 		}
 		const last = active.lastMessages?.[active.lastMessages.length - 1];
 		const failed = last?.role === "assistant" && Boolean((last as { errorMessage?: string }).errorMessage);
+		// HITL: a clean run end opens a completion gate instead of settling done.
+		// The human approves (settle) or revises (re-prompt). Failed runs settle as
+		// error directly — there is nothing to approve.
+		if (!failed && !this.allowAutonomous) {
+			this.pauseForCompletion(active);
+			return;
+		}
 		this.settleNode(active.node.id, failed, { messages: active.lastMessages });
 	}
 
