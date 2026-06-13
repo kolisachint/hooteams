@@ -67,7 +67,7 @@ describe("markDone propagation", () => {
 		const dag = diamond();
 		const messages = [{ role: "user" as const, content: "done", timestamp: Date.now() }];
 		dag.markDone("plan", messages);
-		expect(dag.get("plan")?.results).toBe(messages);
+		expect(dag.get("plan")?.results).toEqual(messages);
 	});
 
 	test("failed nodes block their descendants", () => {
@@ -174,6 +174,15 @@ describe("immutable snapshots", () => {
 		node.deps.push("ghost");
 		expect(dag.get("a")?.deps).toEqual([]);
 	});
+
+	test("mutating a returned node's results array does not change the dag", () => {
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "x" });
+		dag.markDone("a", [{ role: "assistant", content: "one", timestamp: 1 } as any]);
+		const node = dag.get("a")!;
+		node.results!.push({ role: "user", content: "leak", timestamp: 2 } as any);
+		expect(dag.get("a")?.results).toHaveLength(1);
+	});
 });
 
 describe("persistence", () => {
@@ -188,6 +197,20 @@ describe("persistence", () => {
 		expect(restored.get("plan")?.results).toEqual(dag.get("plan")?.results);
 		// derived state survives the round trip: code is running, docs is ready
 		expect(restored.ready().map((node) => node.id)).toEqual(["docs"]);
+	});
+
+	test("a node reset after producing output round-trips cleanly", () => {
+		const dag = diamond();
+		dag.markDone("plan");
+		dag.setOutput("plan", "the plan");
+		dag.resetToIdle("plan");
+
+		const restored = TaskDag.fromJSON(JSON.parse(JSON.stringify(dag.toJSON())));
+
+		// resetToIdle clears output/results by removing them, so the serialized
+		// shape is stable: no explicit-undefined keys to drop on the round trip.
+		expect(restored.all()).toEqual(dag.all());
+		expect(dag.get("plan")?.output).toBeUndefined();
 	});
 
 	test("the restored dag is independent of the source", () => {

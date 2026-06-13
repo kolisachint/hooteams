@@ -36,18 +36,29 @@ export class TaskDag {
 	}
 
 	/**
-	 * Frozen shallow copy handed to external callers, so the dag's internal node
-	 * state is never held as a live mutable reference: writing to a returned
-	 * node throws (strict mode). All mutation goes through the dag's own methods
-	 * (markRunning, markDone, setOutput, incrementAttempts, …).
+	 * Frozen copy handed to external callers, so the dag's internal node state is
+	 * never held as a live mutable reference: writing to a returned node throws
+	 * (strict mode), and its `deps`/`results` arrays are sliced so they can't be
+	 * spliced into either. (The AgentMessage objects inside `results` are shared
+	 * by reference — they are treated as immutable agent output.) All mutation
+	 * goes through the dag's own methods (markRunning, markDone, setOutput,
+	 * incrementAttempts, …).
 	 */
 	private snapshot(node: TaskNode): TaskNode {
-		return Object.freeze({ ...node, deps: node.deps.slice() });
+		const copy: TaskNode = { ...node, deps: node.deps.slice() };
+		if (node.results) copy.results = node.results.slice();
+		return Object.freeze(copy);
 	}
 
-	/** Record a settled node's final assistant text, injected into dependents' prompts. */
+	/**
+	 * Record a settled node's final assistant text, injected into dependents'
+	 * prompts. Clearing it (undefined) removes the field rather than storing an
+	 * explicit `undefined`, keeping the node's serialized shape stable.
+	 */
 	setOutput(id: string, output: string | undefined): void {
-		this.require(id).output = output;
+		const node = this.require(id);
+		if (output === undefined) delete node.output;
+		else node.output = output;
 	}
 
 	/** Count one more failed/reworked attempt against a node and return the new total. */
@@ -95,9 +106,9 @@ export class TaskDag {
 
 	/** Nodes that are idle and whose dependencies are all done. */
 	ready(): TaskNode[] {
-		return this.all().filter(
-			(node) => node.status === "idle" && node.deps.every((dep) => this.nodes.get(dep)?.status === "done"),
-		);
+		return [...this.nodes.values()]
+			.filter((node) => node.status === "idle" && node.deps.every((dep) => this.nodes.get(dep)?.status === "done"))
+			.map((node) => this.snapshot(node));
 	}
 
 	/** Mark a node as dispatched so ready() stops returning it. */
@@ -114,7 +125,8 @@ export class TaskDag {
 		const node = this.require(id);
 		const readyBefore = new Set(this.ready().map((other) => other.id));
 		node.status = "done";
-		node.results = results;
+		if (results === undefined) delete node.results;
+		else node.results = results;
 		return this.ready().filter((other) => !readyBefore.has(other.id));
 	}
 
@@ -139,14 +151,14 @@ export class TaskDag {
 	resetToIdle(id: string): TaskNode {
 		const node = this.require(id);
 		node.status = "idle";
-		node.results = undefined;
-		node.output = undefined;
+		delete node.results;
+		delete node.output;
 		return this.snapshot(node);
 	}
 
 	/** Nodes that can never run because a transitive dependency failed. */
 	blocked(): TaskNode[] {
-		const failed = new Set(this.all().filter((node) => node.status === "error").map((node) => node.id));
+		const failed = new Set([...this.nodes.values()].filter((node) => node.status === "error").map((node) => node.id));
 		if (failed.size === 0) return [];
 		const blocked: TaskNode[] = [];
 		for (const id of this.topologicalOrder()) {
@@ -163,7 +175,7 @@ export class TaskDag {
 	/** True when every node is done, failed, or permanently blocked. */
 	isComplete(): boolean {
 		const blockedIds = new Set(this.blocked().map((node) => node.id));
-		return this.all().every(
+		return [...this.nodes.values()].every(
 			(node) => node.status === "done" || node.status === "error" || blockedIds.has(node.id),
 		);
 	}
