@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.14] - 2026-06-13
 
 ### Added
 - New package: the `TaskDag` — topological order (Kahn), ready/blocked tracking, retry/rework helpers, JSON persistence and crash-recovery (`toJSON`/`fromJSON`/`resetTransient`) — extracted from `@kolisachint/hooteams-orchestrator` into this dependency-free foundation layer (its only import is the `AgentMessage` type from `@kolisachint/hoocode-agent-core`). Re-exported from the orchestrator barrel, so existing consumers are unaffected.

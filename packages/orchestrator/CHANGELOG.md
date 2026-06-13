@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.14] - 2026-06-13
 
 ### Changed
 - Extracted the `TaskDag` (and the `TaskNode`/`AgentStatus`/`SerializedDag` types) into a new dependency-free `@kolisachint/hooteams-dag` package, the foundation layer of the dependency stack (`dag ← orchestrator ← bridge ← server ← cli`). `TaskDag`, `TaskNodeInput`, and the moved types are re-exported from this package's barrel, so the public API is unchanged. New dependency: `@kolisachint/hooteams-dag`.
