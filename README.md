@@ -4,7 +4,8 @@ Multi-agent team orchestration on top of [hoocode](https://github.com/kolisachin
 
 ```
 packages/
-  orchestrator/   team DAG, planner, agent registry, tagged event channel
+  dag/            dependency-free task DAG: topological order, ready/blocked, immutable snapshots
+  orchestrator/   team execution, planner, agent registry, tagged event channel
   bridge/         SSE fan-out, wire serializer, HTTP routes
 apps/
   server/         Bun.serve() entry: orchestrator → bridge → HTTP
@@ -503,9 +504,12 @@ bun run check
 
 ### Monorepo structure
 
+The dependency stack is strictly layered — `dag ← orchestrator ← bridge ← server ← cli` — with each package depending only on those below it.
+
 | Package                            | Path                    | Description                                    |
 |------------------------------------|-------------------------|------------------------------------------------|
-| `@kolisachint/hooteams-orchestrator` | `packages/orchestrator` | Team, TeamChannel, DAG, Planner, agent registry |
+| `@kolisachint/hooteams-dag`          | `packages/dag`          | Dependency-free task DAG + node types           |
+| `@kolisachint/hooteams-orchestrator` | `packages/orchestrator` | Team, TeamChannel, TeamOrchestrator, Planner, agent registry |
 | `@kolisachint/hooteams-bridge`       | `packages/bridge`       | SSE fan-out, wire serializer, HTTP router       |
 | `@kolisachint/hooteams-server`       | `apps/server`           | Bun.serve() entry: orchestrator → bridge → HTTP |
 | `@kolisachint/hooteams-cli`          | `apps/cli`              | CLI binary (`hooteams`)                         |

@@ -2,7 +2,7 @@ import type { Session } from "@kolisachint/hoocode-agent-core";
 import { randomUUID } from "node:crypto";
 import { ApprovalRegistry, type ApprovalRequest } from "./ask-options.js";
 import type { TeamChannel } from "./channel.js";
-import { TaskDag } from "./dag.js";
+import { TaskDag } from "@kolisachint/hooteams-dag";
 import type { AgentEvent, AgentMessage, SerializedDag, TaskNode, TeamEvent, TraceRun, TraceTask } from "./types.js";
 
 /**

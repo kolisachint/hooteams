@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { InMemorySessionRepo } from "@kolisachint/hoocode-agent-core";
-import { TaskDag } from "../src/dag.js";
+import { TaskDag } from "@kolisachint/hooteams-dag";
 import { TeamOrchestrator } from "../src/team-orchestrator.js";
 import { FakeNodeHarness, fakeHarnessFactory } from "../src/testing.js";
 import type { AgentEvent } from "../src/types.js";

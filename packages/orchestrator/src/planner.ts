@@ -1,7 +1,7 @@
 import { Agent, type AgentMessage, type AgentTool, type StreamFn } from "@kolisachint/hoocode-agent-core";
 import { getModel, type Model, Type } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
-import type { TaskDag } from "./dag.js";
+import type { TaskDag } from "@kolisachint/hooteams-dag";
 import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import type { Team } from "./team.js";
 import { extractMessageText } from "./team-orchestrator.js";

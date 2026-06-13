@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskDag } from "../src/dag.js";
+import { TaskDag } from "@kolisachint/hooteams-dag";
 import { createMemoryReadTool, createMemoryWriteTool, projectKeyFromCwd, TeamMemory } from "../src/memory.js";
 import { TeamOrchestrator } from "../src/team-orchestrator.js";
 import type { AgentEvent, AgentMessage, TaskNode } from "../src/types.js";

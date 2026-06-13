@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { InMemorySessionRepo, type Session } from "@kolisachint/hoocode-agent-core";
 import { TeamChannel } from "../src/channel.js";
-import { TaskDag } from "../src/dag.js";
+import { TaskDag } from "@kolisachint/hooteams-dag";
 import { TeamOrchestrator } from "../src/team-orchestrator.js";
 import type { AgentEvent, AgentMessage, TaskNode, TeamEvent } from "../src/types.js";
 
