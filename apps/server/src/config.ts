@@ -16,6 +16,12 @@ export interface ServerConfig {
 	sessionsRoot?: string;
 	/** Restore and continue an interrupted run on startup. Defaults to false. */
 	resumeInterrupted?: boolean;
+	/**
+	 * Skip the orchestrator's enforced human-in-the-loop completion gate. Defaults
+	 * to false (HITL active). The CLI's --allow-autonomous overrides this. See
+	 * docs/hitl-gates.md.
+	 */
+	allowAutonomous?: boolean;
 }
 
 export const DEFAULT_PORT = 4242;
@@ -30,6 +36,7 @@ export interface RawServerConfig {
 	port?: number;
 	sessionsRoot?: string;
 	resumeInterrupted?: boolean;
+	allowAutonomous?: boolean;
 }
 
 /**
@@ -86,5 +93,6 @@ export function validateConfig(raw: RawServerConfig, source: string): ServerConf
 		port: raw.port,
 		sessionsRoot: raw.sessionsRoot,
 		resumeInterrupted: raw.resumeInterrupted === true,
+		allowAutonomous: raw.allowAutonomous === true,
 	};
 }

@@ -346,3 +346,42 @@ describe("per-role tools", () => {
 		}
 	});
 });
+
+describe("Team.trackStatus reports paused gates", () => {
+	function spawnedTeam() {
+		const channel = new TeamChannel();
+		const team = new Team(channel, { resolveModel: () => fakeModel });
+		team.spawn({ role: "coder", systemPrompt: "code", model: "fake-model" });
+		return { channel, team };
+	}
+
+	test("task_paused sets the member to paused", () => {
+		const { channel, team } = spawnedTeam();
+		channel.publish({
+			type: "task_paused",
+			taskId: "t1",
+			role: "coder",
+			agentId: "a1",
+			question: "Approve?",
+			options: ["approve", "revise"],
+			ts: Date.now(),
+		});
+		expect(team.status().coder).toBe("paused");
+	});
+
+	test("agent_end mirrored right after task_paused does not clobber paused", () => {
+		const { channel, team } = spawnedTeam();
+		channel.publish({ type: "task_paused", taskId: "t1", role: "coder", agentId: "a1", question: "q", options: ["approve"], ts: Date.now() });
+		channel.publish({ type: "agent_end", role: "coder", agentId: "a1", ts: Date.now(), messages: [] } as any);
+		expect(team.status().coder).toBe("paused");
+	});
+
+	test("task_resumed lifts paused back to thinking; a later agent_end settles done", () => {
+		const { channel, team } = spawnedTeam();
+		channel.publish({ type: "task_paused", taskId: "t1", role: "coder", agentId: "a1", question: "q", options: ["approve"], ts: Date.now() });
+		channel.publish({ type: "task_resumed", taskId: "t1", role: "coder", agentId: "a1", chosenOption: "approve", ts: Date.now() });
+		expect(team.status().coder).toBe("thinking");
+		channel.publish({ type: "agent_end", role: "coder", agentId: "a1", ts: Date.now(), messages: [] } as any);
+		expect(team.status().coder).toBe("done");
+	});
+});

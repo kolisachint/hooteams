@@ -42,6 +42,16 @@ describe("validateConfig", () => {
 		);
 		expect(config.team).toHaveLength(1);
 		expect(config.maxConcurrent).toBe(2);
+		// HITL is the default: allowAutonomous is false unless explicitly opted in.
+		expect(config.allowAutonomous).toBe(false);
+	});
+
+	test("allowAutonomous defaults to false and is opt-in via the config file", () => {
+		const base = { team: [{ role: "coder", model: "m", systemPrompt: "s" }] };
+		expect(validateConfig(base, "test").allowAutonomous).toBe(false);
+		expect(validateConfig({ ...base, allowAutonomous: true }, "test").allowAutonomous).toBe(true);
+		// Only an explicit boolean true enables it; anything else stays HITL.
+		expect(validateConfig({ ...base, allowAutonomous: "yes" as any }, "test").allowAutonomous).toBe(false);
 	});
 
 	test("rejects missing team array and malformed entries", () => {
@@ -267,7 +277,9 @@ describe("POST /runs end to end", () => {
 	const teamOptions = { resolveModel: () => fakeModel, streamFn: gateStreamFn, getApiKey: async () => "test-key" };
 
 	test("a posted run pauses on its gate, resumes over HTTP, and traces complete", async () => {
-		const running = startServer(config, { port: 0, sessionsRoot, teamOptions });
+		// This suite exercises the agent-driven marker gate; opt out of the HITL
+		// completion gate so the run settles without an extra approval.
+		const running = startServer(config, { port: 0, sessionsRoot, teamOptions, allowAutonomous: true });
 		const base = `http://localhost:${running.port}`;
 		try {
 			const started = await fetch(`${base}/runs`, {
@@ -325,7 +337,7 @@ describe("POST /runs end to end", () => {
 	test("a paused run survives a server restart with resumeInterrupted", async () => {
 		const restartRoot = mkdtempSync(join(tmpdir(), "hooteams-server-restart-"));
 		try {
-			const first = startServer(config, { port: 0, sessionsRoot: restartRoot, teamOptions });
+			const first = startServer(config, { port: 0, sessionsRoot: restartRoot, teamOptions, allowAutonomous: true });
 			const baseA = `http://localhost:${first.port}`;
 			const started = await fetch(`${baseA}/runs`, {
 				method: "POST",
@@ -338,7 +350,13 @@ describe("POST /runs end to end", () => {
 			await new Promise((resolve) => setTimeout(resolve, 100));
 			await first.stop();
 
-			const second = startServer(config, { port: 0, sessionsRoot: restartRoot, teamOptions, resumeInterrupted: true });
+			const second = startServer(config, {
+				port: 0,
+				sessionsRoot: restartRoot,
+				teamOptions,
+				resumeInterrupted: true,
+				allowAutonomous: true,
+			});
 			const baseB = `http://localhost:${second.port}`;
 			try {
 				const pending = await pollPending(baseB);

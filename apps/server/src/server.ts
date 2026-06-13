@@ -41,6 +41,8 @@ export interface StartOptions {
 	sessionsRoot?: string;
 	/** Overrides config.resumeInterrupted. */
 	resumeInterrupted?: boolean;
+	/** Overrides config.allowAutonomous. When false (default), HITL completion gate is active. */
+	allowAutonomous?: boolean;
 }
 
 export function startServer(config: ServerConfig, options: StartOptions = {}): RunningServer {
@@ -54,6 +56,9 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 	const team = new Team(channel, teamOptions);
 	const bridge = new SSEBridge(channel);
 
+	// HITL is the product default: the completion gate is active unless the CLI
+	// flag or config opts into autonomous runs (CLI wins over config).
+	const allowAutonomous = options.allowAutonomous ?? config.allowAutonomous ?? false;
 	const sessionsRoot = options.sessionsRoot ?? config.sessionsRoot ?? join(homedir(), ".hooteams", "sessions");
 	const repo = new JsonlSessionRepo({ sessionsRoot });
 	// Run sessions are keyed by a stable cwd so a restarted server (possibly
@@ -88,6 +93,7 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 				team,  // Pass team to enable delegation tools
 			}),
 			taskPrompt: (node: { id: string }) => prompts.get(node.id) ?? node.id,
+			allowAutonomous,
 		};
 	};
 
