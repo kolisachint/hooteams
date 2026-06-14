@@ -109,6 +109,11 @@ export interface RouterOptions {
 	 * Absent, POST /runs responds 404.
 	 */
 	startRun?: (request: StartRunRequest) => Promise<{ runId: string }>;
+	/**
+	 * Root directory for session JSONL files. Enables GET /sessions/:runId
+	 * and GET /sessions endpoints for hoocanvas replay.
+	 */
+	sessionsRoot?: string;
 }
 
 /** Shape-validate a POST /runs body. Returns an error message, or undefined when valid. */
@@ -294,6 +299,62 @@ export function createRouter(team: Team, channel: TeamChannel, bridge: SSEBridge
 				}
 				team.steer(body.role, body.message);
 				return json({ ok: true, role: body.role });
+			}
+
+			// ── Session file endpoints (for hoocanvas replay) ──
+			if (request.method === "GET" && path === "/sessions") {
+				const sessionsRoot = routerOptions.sessionsRoot;
+				if (!sessionsRoot) {
+					return json({ error: "Sessions root not configured" }, 404);
+				}
+				try {
+					const { readdir } = await import("node:fs/promises");
+					const { join } = await import("node:path");
+					const files = await readdir(sessionsRoot, { recursive: true });
+					const sessions = files
+						.filter((f): f is string => typeof f === "string" && f.endsWith(".jsonl") && f.includes("run-"))
+						.map((f) => {
+							const match = f.match(/run-([\w-]+)\.jsonl$/);
+							return match ? { runId: match[1], filename: f } : null;
+						})
+						.filter((s): s is { runId: string; filename: string } => s !== null);
+					return json(sessions);
+				} catch {
+					return json({ error: "Failed to list sessions" }, 500);
+				}
+			}
+
+			if (request.method === "GET" && path.startsWith("/sessions/")) {
+				const runId = decodeURIComponent(path.slice("/sessions/".length));
+				if (!runId || runId.length === 0) {
+					return json({ error: "Missing run ID" }, 400);
+				}
+				const sessionsRoot = routerOptions.sessionsRoot;
+				if (!sessionsRoot) {
+					return json({ error: "Sessions root not configured" }, 404);
+				}
+				try {
+					const { readdir } = await import("node:fs/promises");
+					const { join } = await import("node:path");
+					const { readFile } = await import("node:fs/promises");
+					// Search for the session file containing the run ID
+					const files = await readdir(sessionsRoot, { recursive: true });
+					const sessionFile = files
+						.filter((f): f is string => typeof f === "string" && f.endsWith(".jsonl"))
+						.find((f) => f.includes(runId));
+					if (!sessionFile) {
+						return json({ error: `Session not found: ${runId}` }, 404);
+					}
+					const content = await readFile(join(sessionsRoot, sessionFile), "utf-8");
+					return new Response(content, {
+						headers: {
+							...CORS_HEADERS,
+							"Content-Type": "text/plain; charset=utf-8",
+						},
+					});
+				} catch {
+					return json({ error: "Failed to read session" }, 500);
+				}
 			}
 
 			return json({ error: "Not found" }, 404);

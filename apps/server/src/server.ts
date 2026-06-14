@@ -234,7 +234,7 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		void orchestrator.run();
 	};
 
-	const router = createRouter(team, channel, bridge, { hitl: () => activeRun, startRun });
+	const router = createRouter(team, channel, bridge, { hitl: () => activeRun, startRun, sessionsRoot });
 
 	// Config-spawned agents get the team-collaboration tools on top of their
 	// own: ask_agent for request-response messaging, and (when memory is on)
