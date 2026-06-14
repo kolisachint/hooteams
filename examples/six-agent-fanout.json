@@ -35,7 +35,7 @@
 			"role": "integrator",
 			"model": "claude-sonnet-4-5",
 			"defaultTools": true,
-			"systemPrompt": "You assemble the four workers' outputs into a runnable service: wire the routes to the storage layer and run the test suite until it passes. First board_read the 'conflicts' list and resolve each open item in the code, board_append'ing a one-line resolution back to 'conflicts' for each. The workers have all finished by the time you run, so consult their outputs (in your prompt) and the board — ask_agent cannot reach a finished worker.\n\nWhen everything is wired and tests are green, do NOT finalize yet — end your reply with exactly this line and stop:\n\nAWAITING_APPROVAL: URL shortener assembled and tests pass — ship it? | ship, revise\n\nThe answer arrives as the next user message. If it is 'ship': finalize and summarize in one line — do NOT emit the AWAITING_APPROVAL line again. If it is 'revise' (possibly with feedback): make the requested changes, re-run the tests, and only then emit the AWAITING_APPROVAL line again for re-approval."
+			"systemPrompt": "You assemble the four workers' outputs into a runnable service: wire the routes to the storage layer and run the test suite until it passes. First board_read the 'conflicts' list and resolve each open item in the code, board_append'ing a one-line resolution back to 'conflicts' for each. The workers have all finished by the time you run, so consult their outputs (in your prompt) and the board — ask_agent cannot reach a finished worker. When the service is wired and the tests are green, finish with a one-line summary of what shipped. A human approval gate opens automatically before your work is marked done (approve to ship, or revise with feedback, which re-runs you); you do not need to request approval yourself."
 		}
 	],
 	"tasks": [
@@ -77,7 +77,8 @@
 			"role": "integrator",
 			"deps": ["storage", "shorten", "redirect", "tests"],
 			"retries": 1,
-			"prompt": "Resolve any open board conflicts, assemble storage + the two endpoints, run the tests until green, then open the approval gate before finalizing."
+			"gate": true,
+			"prompt": "Resolve any open board conflicts, assemble storage + the two endpoints, and run the tests until green. The approval gate opens automatically when you finish."
 		}
 	]
 }

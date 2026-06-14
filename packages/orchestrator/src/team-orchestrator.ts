@@ -696,11 +696,21 @@ export class TeamOrchestrator {
 		// HITL: a clean run end opens a completion gate instead of settling done.
 		// The human approves (settle) or revises (re-prompt). Failed runs settle as
 		// error directly — there is nothing to approve.
-		if (!failed && !this.allowAutonomous) {
+		if (!failed && this.shouldGate(active.node)) {
 			this.pauseForCompletion(active);
 			return;
 		}
 		this.settleNode(active.node.id, failed, { messages: active.lastMessages });
+	}
+
+	/**
+	 * Whether a clean run end opens a completion gate: the node's own `gate`
+	 * policy wins, falling back to the run-wide default (HITL gates every node
+	 * unless allowAutonomous). This is what lets a run gate only at chosen nodes
+	 * — e.g. autonomous everywhere, with gate:true on the merge node alone.
+	 */
+	private shouldGate(node: TaskNode): boolean {
+		return node.gate ?? !this.allowAutonomous;
 	}
 
 	private settleNode(taskId: string, failed: boolean, opts: { messages?: AgentMessage[]; error?: unknown; holdsSlot?: boolean }): void {

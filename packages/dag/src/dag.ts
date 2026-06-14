@@ -6,6 +6,8 @@ export interface TaskNodeInput {
 	deps?: string[];
 	/** Extra dispatch attempts the node gets after a failed run. Default 0. */
 	retries?: number;
+	/** Per-node approval policy overriding the run default (see TaskNode.gate). */
+	gate?: boolean;
 }
 
 /**
@@ -22,6 +24,7 @@ export class TaskDag {
 		}
 		const node: TaskNode = { id: input.id, role: input.role, deps: input.deps?.slice() ?? [], status: "idle" };
 		if (input.retries !== undefined) node.retries = input.retries;
+		if (input.gate !== undefined) node.gate = input.gate;
 		this.nodes.set(input.id, node);
 		return this.snapshot(node);
 	}

@@ -1,8 +1,9 @@
 # Six-agent fan-out / fan-in run plan
 
 `six-agent-fanout.json` is a `{goal, roles, tasks}` document for `hooteams run`. It
-instantiates a fan-out/fan-in team using only existing primitives — no orchestrator
-changes.
+instantiates a fan-out/fan-in team. The design review behind it drove a set of
+orchestrator hardening changes (peer messaging, the coordination board, per-task gates,
+cascading rework) — see "Issues identified in review" at the bottom.
 
 ```
 contract ─┬─→ storage  ─┐
@@ -13,8 +14,8 @@ contract ─┬─→ storage  ─┐
 
 - **Topology:** one `lead` writes a build contract; four workers build against it in
   parallel (each `deps: ["contract"]`); `integrator` fans them in.
-- **Gate at merges:** only `integrator` emits the `AWAITING_APPROVAL` marker, so the
-  single human gate fires at the merge.
+- **Gate at merges:** only the `integrate` task sets `gate: true`, so the single
+  human approval gate (structured approve/revise) fires at the merge.
 - **Validation:** one global goal-validator runs after `integrate` settles.
 
 ## Required server config
@@ -24,14 +25,16 @@ This plan only behaves as designed when the server runs with these in
 
 ```jsonc
 {
-  "allowAutonomous": true,   // gate fires ONLY at the integrator's marker;
-                             // false (default) gates every task instead
+  "allowAutonomous": true,   // run default = no gate; the integrate task opts in
+                             // with "gate": true, so only the merge gates
   "validator": "You are the goal validator. Judge whether the URL shortener goal was actually achieved from the task outputs. When it was not, name the single task whose work is wrong to re-run — its dependents re-run automatically.",
   "memory": true             // on by default; powers the coordination board
 }
 ```
 
-Then: `hooteams run examples/six-agent-fanout.json`.
+Then: `hooteams run examples/six-agent-fanout.json`. The gate is per-task: `gate: true`
+forces an approval gate on a task even in an autonomous run, `gate: false` skips it even
+in an HITL run, and unset follows `allowAutonomous`.
 
 ## Coordination board (shared task list + conflict list)
 
@@ -71,10 +74,10 @@ with its disposition: **[Fixed]** (code changed), **[Mitigated]** (handled in th
    with the wrong content. Inherent to the existing `ask_agent` design; prefer the
    memory board when timing matters.
 
-4. **`allowAutonomous` is run-wide, not per-task.** **[Mitigated]** "Gate at merges"
-   only works with `allowAutonomous: true` (config) plus an `AWAITING_APPROVAL` marker
-   in the integrator prompt alone. With the default `false`, a completion gate fires on
-   *every* task. See "Required server config".
+4. **`allowAutonomous` is run-wide, not per-task.** **[Fixed]** A task can now set
+   `gate: true`/`false` to override the run default (`TaskNode.gate` → `shouldGate`), so
+   "gate at merges" is just `gate: true` on the `integrate` task — no global flag
+   juggling and no per-prompt convention. `allowAutonomous` is only the fallback.
 
 5. **Memory is project-scoped, not run-scoped.** **[Fixed]** The `board_*` tools write
    under a per-run `board/<runId>/` namespace (so runs can't collide) and tag entries
@@ -92,10 +95,11 @@ with its disposition: **[Fixed]** (code changed), **[Mitigated]** (handled in th
    the `integrator` against the corrected work instead of leaving it stale. The dag
    keeps dependents blocked until the reworked node completes, preserving order.
 
-8. **The integrator approval gate can loop.** **[Mitigated]** On resume the chosen
-   option is just steered back, so a re-emitted marker would re-gate forever. The
-   prompt finalizes on `ship` without re-emitting the marker, and only re-gates after a
-   `revise`.
+8. **The integrator approval gate can loop.** **[Fixed]** Using `gate: true` routes the
+   integrator through the orchestrator's *structural* completion gate
+   (`resolveCompletionGate`): `approve` settles it directly, `revise` re-prompts with
+   feedback and re-gates. No `AWAITING_APPROVAL` marker, so there is no re-emission loop
+   to manage in the prompt.
 
 9. **Pure fan-out leaves siblings blind to each other.** **[Mitigated]** Workers build
    against a frozen contract and can't see each other's code until `integrate`. The

@@ -23,6 +23,13 @@ export interface TaskNode {
 	retries?: number;
 	/** Failed attempts consumed so far; set by the orchestrator. */
 	attempts?: number;
+	/**
+	 * Per-node approval policy, overriding the run-wide default: true forces a
+	 * human completion gate before this node settles "done" (even in an otherwise
+	 * autonomous run); false skips it (even in an otherwise HITL run). Unset means
+	 * follow the run default. Lets a run gate only at chosen nodes (e.g. merges).
+	 */
+	gate?: boolean;
 }
 
 /** Shape of TaskDag.toJSON(), as persisted in "dag_state" session entries. */

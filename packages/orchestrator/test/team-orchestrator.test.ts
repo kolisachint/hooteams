@@ -256,6 +256,52 @@ describe("TeamOrchestrator", () => {
 		expect(requests[0]).toMatchObject({ taskId: "build", kind: "completion", options: ["approve", "revise"] });
 	});
 
+	test("gate:true opens a completion gate at one node in an otherwise autonomous run", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		dag.add({ id: "b", role: "coder", deps: ["a"], gate: true });
+		const { fakes, createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+		const paused = once(channel, "task_paused");
+
+		// Autonomous run: only the gate:true node should pause.
+		const orchestrator = new TeamOrchestrator(dag, { session, channel, createHarness, allowAutonomous: true });
+		const run = orchestrator.run();
+
+		const gate = await paused;
+		expect(gate).toMatchObject({ taskId: "b", options: ["approve", "revise"] });
+		// "a" settled autonomously without a gate.
+		expect(dag.get("a")?.status).toBe("done");
+		expect(events.some((event) => event.type === "task_paused" && event.taskId === "a")).toBe(false);
+
+		expect(orchestrator.resume("b", "approve")).toBe(true);
+		await run;
+		expect(dag.get("b")?.status).toBe("done");
+		// approve settles structurally — the agent ran exactly once (no marker loop).
+		expect(fakes.get("b")?.prompts).toHaveLength(1);
+		expect(events.at(-1)?.type).toBe("dag_complete");
+	});
+
+	test("gate:false suppresses the completion gate in an otherwise HITL run", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "solo", role: "coder", gate: false });
+		const { createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+
+		// HITL run, but the node opts out of gating.
+		await new TeamOrchestrator(dag, { session, channel, createHarness, allowAutonomous: false }).run();
+
+		expect(dag.get("solo")?.status).toBe("done");
+		expect(events.some((event) => event.type === "task_paused")).toBe(false);
+		expect(events.at(-1)?.type).toBe("dag_complete");
+	});
+
 	test("HITL completion gate: revise re-prompts with feedback, then approve settles", async () => {
 		const session = await new InMemorySessionRepo().create();
 		const dag = new TaskDag();
