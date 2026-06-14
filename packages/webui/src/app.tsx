@@ -60,6 +60,18 @@ function RunHeader({ runInfo }: { runInfo: RunInfo }) {
 	);
 }
 
+/** Live task graph for the active run, shown above the agent board. */
+function LiveDag() {
+	const runInfo = useStore((state) => state.runInfo);
+	if (!runInfo || Object.keys(runInfo.dag).length === 0) return null;
+	return (
+		<div className="mb-6">
+			<RunHeader runInfo={runInfo} />
+			<DagViewer runInfo={runInfo} />
+		</div>
+	);
+}
+
 export function App() {
 	const [runInfo, setRunInfo] = useState<RunInfo | null>(null);
 	const [loading, setLoading] = useState(false);
@@ -160,6 +172,7 @@ export function App() {
 					<ConnectionBadge />
 				</div>
 			</header>
+			<LiveDag />
 			<TeamBoard />
 		</div>
 	);

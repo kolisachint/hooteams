@@ -1015,7 +1015,21 @@ export class TeamOrchestrator {
 	}
 
 	private snapshotDag(): void {
-		this.persist("dag_state", { runId: this.runId, dag: this.dag.toJSON(), ts: Date.now() });
+		const dag = this.dag.toJSON();
+		const ts = Date.now();
+		this.persist("dag_state", { runId: this.runId, dag, ts });
+		// Broadcast the same snapshot live so attached UIs can render the task
+		// graph without reading the session file. task_* events patch per-node
+		// status between snapshots.
+		this.publish({
+			type: "dag_snapshot",
+			runId: this.runId,
+			role: "orchestrator",
+			agentId: this.runId,
+			dag,
+			goal: this.validator?.goal,
+			ts,
+		});
 	}
 
 	/**

@@ -43,6 +43,19 @@ export interface AssistantDelta {
 	content?: string;
 }
 
+/** A dag node as it crosses the wire in a dag_snapshot (mirrors SerializedDag). */
+export interface WireDagNode {
+	id: string;
+	role: string;
+	deps: string[];
+	status: string;
+	retries?: number;
+	attempts?: number;
+	gate?: boolean;
+	advisor?: boolean;
+	results?: unknown[];
+}
+
 export type TeamEvent = TeamTag &
 	(
 		| { type: "agent_start" }
@@ -55,6 +68,16 @@ export type TeamEvent = TeamTag &
 		| { type: "tool_execution_start"; toolCallId: string; toolName: string; args?: unknown }
 		| { type: "tool_execution_update"; toolCallId: string; toolName: string; partialResult?: unknown }
 		| { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: unknown; isError?: boolean }
+		// ── Team / DAG lifecycle events (role "orchestrator" for run-level ones) ──
+		| { type: "dag_snapshot"; runId: string; dag: Record<string, WireDagNode>; goal?: string }
+		| { type: "task_started"; taskId: string }
+		| { type: "task_finished"; taskId: string; status: "done" | "error" }
+		| { type: "task_retried"; taskId: string; attempt: number; error?: string }
+		| { type: "task_paused"; taskId: string; question?: string; options?: string[] }
+		| { type: "task_resumed"; taskId: string; chosenOption?: string }
+		| { type: "dag_complete"; runId: string }
+		| { type: "dag_failed"; runId: string }
+		| { type: "team_error"; error: string }
 	);
 
 export type AgentStatus = "idle" | "thinking" | "streaming" | "tool" | "done" | "error";

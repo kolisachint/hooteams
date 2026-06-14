@@ -79,6 +79,25 @@ export interface DagSettledEvent {
 }
 
 /**
+ * A full snapshot of the dag, broadcast live so UIs can render the task graph
+ * (structure, deps, gates, advisors, per-node status) without reading the
+ * session file. `role` is always "orchestrator"; `agentId` is the run id.
+ * Mirrors the persisted "dag_state" entry. Emitted at run start and on every
+ * settle/pause, alongside the finer-grained task_* events that patch status
+ * between snapshots.
+ */
+export interface DagSnapshotEvent {
+	type: "dag_snapshot";
+	runId: string;
+	role: string;
+	agentId: string;
+	dag: SerializedDag;
+	/** The run's goal, when one was recorded. */
+	goal?: string;
+	ts: number;
+}
+
+/**
  * The single wire format every consumer (bridge, canvas, CLI attach) sees:
  * a hoocode AgentEvent tagged with which team member produced it, plus
  * team-level synthetic events like "team_error". Extend this union additively
@@ -96,7 +115,8 @@ export type TeamEvent =
 	| TaskStartedEvent
 	| TaskRetriedEvent
 	| TaskFinishedEvent
-	| DagSettledEvent;
+	| DagSettledEvent
+	| DagSnapshotEvent;
 
 /** Configuration for a single team member. */
 export interface RoleConfig {
