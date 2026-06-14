@@ -12,7 +12,7 @@ export { REPLAY_BUFFER_SIZE, TeamChannel } from "./channel.js";
 export type { Subscribable, TeamEventListener } from "./channel.js";
 export { TaskDag } from "@kolisachint/hooteams-dag";
 export type { TaskNodeInput } from "@kolisachint/hooteams-dag";
-export { createMemoryReadTool, createMemoryWriteTool, defaultMemoryRoot, projectKeyFromCwd, TeamMemory } from "./memory.js";
+export { createBoardTools, createMemoryReadTool, createMemoryWriteTool, defaultMemoryRoot, projectKeyFromCwd, TeamMemory } from "./memory.js";
 export type { MemoryEntry, MemoryTaskRecord, TeamMemoryOptions } from "./memory.js";
 export { createNodeHarnessFactory, createValidatorAgent, HITL_SYSTEM_PROMPT, VALIDATOR_PROTOCOL } from "./node-harness.js";
 export type { NodeHarnessFactoryOptions, ValidatorAgentOptions } from "./node-harness.js";

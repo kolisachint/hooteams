@@ -35,16 +35,17 @@ Then: `hooteams run examples/six-agent-fanout.json`.
 
 ## Coordination board (shared task list + conflict list)
 
-The shared `TeamMemory` (`memory_read`/`memory_write`) is the primary coordination
+Agents on a run share a **run-scoped coordination board** via the `board_read` /
+`board_write` / `board_append` tools (keys live under `board/<runId>/` and are tagged
+so they never leak into a later run's bootstrap). It is the primary coordination
 channel — reliable, asynchronous, and it survives after an agent finishes. (Live
-siblings can also `ask_agent` each other directly; see caveat 1.)
+siblings can also `ask_agent` each other directly; see issue 2.)
 
-- The `lead` mints a short board id in the contract; workers prefix all keys with
-  `board/<id>/`.
-- **Task list:** each worker writes only its own `board/<id>/task/<task>` key
-  (single writer per key — safe under concurrency).
-- **Conflict list:** any worker registers `board/<id>/conflict/<slug>`; the
-  `integrator` is the sole resolver and writes `.../resolution`.
+- **Task list:** each worker `board_write`s only its own `task/<task>` key (single
+  writer per key).
+- **Conflict list:** any worker `board_append`s to the shared `conflicts` list —
+  `board_append` is an atomic read-modify-write, so concurrent workers never clobber
+  each other's items. The `integrator` resolves them and appends resolutions back.
 
 ## Issues identified in review
 
@@ -75,15 +76,15 @@ with its disposition: **[Fixed]** (code changed), **[Mitigated]** (handled in th
    in the integrator prompt alone. With the default `false`, a completion gate fires on
    *every* task. See "Required server config".
 
-5. **Memory is project-scoped, not run-scoped.** **[Mitigated]** Coordination keys can
-   collide across runs and leak into the next run's bootstrap context. Handled by the
-   per-run `board/<id>/` namespace and an "ignore prior-run board entries" instruction
-   in the lead prompt.
+5. **Memory is project-scoped, not run-scoped.** **[Fixed]** The `board_*` tools write
+   under a per-run `board/<runId>/` namespace (so runs can't collide) and tag entries
+   `board`, which `bootstrapContext` now excludes (so a run's transient task/conflict
+   notes never leak into a later run's prompts). No manual board id needed.
 
-6. **Concurrent memory writes can lose updates.** **[Mitigated]** `memory_write` is a
-   whole-value, last-writer-wins upsert per key. The board uses one key per item with a
-   single writer (each worker writes only its own `task/` key; the integrator owns
-   `resolution` keys), so parallel writes never clobber each other.
+6. **Concurrent memory writes can lose updates.** **[Fixed]** `memory_write` is still a
+   whole-value upsert, but `TeamMemory.append` (behind `board_append`) does its
+   read-modify-write inside the store's serialized chain, so many agents can append to
+   one shared list (`conflicts`) without clobbering each other.
 
 7. **Validator rework is non-cascading.** **[Mitigated]** `dag.resetToIdle` resets only
    the named node, so bouncing an upstream worker would leave `integrate` stale. The

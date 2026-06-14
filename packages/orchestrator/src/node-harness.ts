@@ -10,7 +10,7 @@ import {
 } from "@kolisachint/hoocode-agent-core";
 import { getModel, type Model } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
-import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
+import { createBoardTools, createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import { createAskAgentTool, createDelegateTaskTool } from "./planner.js";
 import type { Team } from "./team.js";
 import { extractMessageText, type NodeHandle } from "./team-orchestrator.js";
@@ -158,10 +158,12 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 			tools.push(createDelegateTaskTool(options.team));
 			tools.push(createAskAgentTool(options.team, { selfRole: node.role }));
 		}
-		// Shared cross-run memory, stamped with this node's run/role provenance.
+		// Shared cross-run memory, stamped with this node's run/role provenance,
+		// plus a run-scoped coordination board (task list + conflict list).
 		if (options.memory) {
 			tools.push(createMemoryReadTool(options.memory));
 			tools.push(createMemoryWriteTool(options.memory, { runId: options.runId, role: node.role }));
+			tools.push(...createBoardTools(options.memory, { runId: options.runId, role: node.role }));
 		}
 		const harness = new AgentHarness({
 			env: new NodeExecutionEnv({ cwd }),

@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskDag } from "@kolisachint/hooteams-dag";
-import { createMemoryReadTool, createMemoryWriteTool, projectKeyFromCwd, TeamMemory } from "../src/memory.js";
+import { createBoardTools, createMemoryReadTool, createMemoryWriteTool, projectKeyFromCwd, TeamMemory } from "../src/memory.js";
 import { TeamOrchestrator } from "../src/team-orchestrator.js";
 import type { AgentEvent, AgentMessage, TaskNode } from "../src/types.js";
 
@@ -94,6 +94,17 @@ describe("TeamMemory", () => {
 		expect(context).not.toContain("oldest");
 	});
 
+	test("append accumulates lines and concurrent appends never lose each other", async () => {
+		const memory = freshMemory({ project: "append" });
+		// Fire many appends to one key at once; whole-value write() would clobber,
+		// but the serialized read-modify-write of append() keeps every line.
+		await Promise.all(Array.from({ length: 25 }, (_, i) => memory.append("conflicts", `item-${i}`, { tags: ["board"] })));
+		const entry = await memory.get("conflicts");
+		const lines = entry!.value.split("\n");
+		expect(lines).toHaveLength(25);
+		expect(new Set(lines).size).toBe(25);
+	});
+
 	test("a corrupt store file yields an empty store instead of an error", async () => {
 		const memory = freshMemory({ project: "corrupt" });
 		await Bun.write(memory.file, "not json{");
@@ -144,6 +155,37 @@ function echoHarness(reply: (text: string) => string) {
 		};
 	};
 }
+
+describe("coordination board tools", () => {
+	test("board tools are run-scoped, list by prefix, and stay out of bootstrap", async () => {
+		const memory = freshMemory({ project: "board" });
+		const tools = createBoardTools(memory, { runId: "run-1", role: "worker" });
+		const read = tools[0]!;
+		const write = tools[1]!;
+		const append = tools[2]!;
+
+		await write.execute("c1", { key: "task/storage", value: "done" } as any);
+		await append.execute("c2", { key: "conflict/list", item: "dup type Foo" } as any);
+		await append.execute("c3", { key: "conflict/list", item: "path mismatch" } as any);
+
+		const all = await read.execute("c4", {} as any);
+		expect(JSON.stringify(all.content)).toContain("task/storage");
+		expect(JSON.stringify(all.content)).toContain("dup type Foo");
+		expect(JSON.stringify(all.content)).toContain("path mismatch");
+
+		// Prefix narrows to one section.
+		const conflicts = await read.execute("c5", { prefix: "conflict/" } as any);
+		expect(JSON.stringify(conflicts.content)).toContain("path mismatch");
+		expect(JSON.stringify(conflicts.content)).not.toContain("task/storage");
+
+		// Run scoping: another run's board sees nothing of run-1's.
+		const readRun2 = createBoardTools(memory, { runId: "run-2", role: "worker" })[0]!;
+		expect((await readRun2.execute("c6", {} as any)).details).toMatchObject({ entries: 0 });
+
+		// Board entries are transient and must not leak into a later run's bootstrap.
+		expect(await memory.bootstrapContext()).toBeUndefined();
+	});
+});
 
 describe("TeamOrchestrator memory integration", () => {
 	test("bootstraps root prompts from prior runs and records task outputs at run end", async () => {
