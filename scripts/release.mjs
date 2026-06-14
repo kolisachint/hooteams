@@ -230,6 +230,14 @@ function rewriteWorkspaceDeps(pkgJsonPath) {
 	return changed;
 }
 
+// Build the web UI bundle so its prebuilt `dist/` ships in the published
+// package. Without this the published webui has no dist and `hooteams start`
+// tries to build it on the user's machine, which fails (devDeps aren't
+// installed for a global install) and the live web UI never starts.
+console.log("Building web UI bundle...");
+run("bun run build:webui");
+console.log();
+
 // packages/ before apps/ so dependencies land in the registry before dependents.
 for (const workspaceDir of ["packages", "apps"]) {
 	const dir = join(repoRoot, workspaceDir);
