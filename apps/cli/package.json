@@ -8,7 +8,8 @@
 	},
 	"dependencies": {
 		"@kolisachint/hooteams-orchestrator": "workspace:*",
-		"@kolisachint/hooteams-server": "workspace:*"
+		"@kolisachint/hooteams-server": "workspace:*",
+		"@kolisachint/hooteams-webui": "workspace:*"
 	},
 	"author": "Sachin Koli",
 	"license": "MIT"

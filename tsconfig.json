@@ -13,5 +13,12 @@
 		"verbatimModuleSyntax": true,
 		"noEmit": true
 	},
-	"include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "apps/*/src/**/*.ts", "apps/*/test/**/*.ts"]
+	"include": [
+		"packages/*/src/**/*.ts",
+		"packages/*/test/**/*.ts",
+		"apps/*/src/**/*.ts",
+		"apps/*/test/**/*.ts",
+		"packages/webui/serve.ts"
+	],
+	"exclude": ["packages/webui/src/**", "packages/webui/vite.config.ts"]
 }

@@ -35,6 +35,14 @@ export interface ServerConfig {
 	 * back for rework before the run settles.
 	 */
 	validator?: string;
+	/**
+	 * Serve the bundled web UI (live mission control) from the same port as the
+	 * SSE bridge. Defaults to true when the UI has been built; set false to
+	 * disable. The CLI's --no-webui overrides this.
+	 */
+	webui?: boolean;
+	/** Override the built web UI directory. Defaults to the @kolisachint/hooteams-webui dist. */
+	webuiRoot?: string;
 }
 
 export const DEFAULT_PORT = 4242;
@@ -54,6 +62,8 @@ export interface RawServerConfig {
 	memoryRoot?: string;
 	project?: string;
 	validator?: string;
+	webui?: boolean;
+	webuiRoot?: string;
 }
 
 /**
@@ -115,6 +125,12 @@ export function validateConfig(raw: RawServerConfig, source: string): ServerConf
 	if (raw.validator !== undefined && typeof raw.validator !== "string") {
 		throw new Error(`${source}: "validator" must be a string (the validator agent's system prompt)`);
 	}
+	if (raw.webui !== undefined && typeof raw.webui !== "boolean") {
+		throw new Error(`${source}: "webui" must be a boolean`);
+	}
+	if (raw.webuiRoot !== undefined && typeof raw.webuiRoot !== "string") {
+		throw new Error(`${source}: "webuiRoot" must be a string`);
+	}
 	return {
 		defaults: raw.defaults,
 		team,
@@ -127,5 +143,7 @@ export function validateConfig(raw: RawServerConfig, source: string): ServerConf
 		memoryRoot: raw.memoryRoot,
 		project: raw.project,
 		validator: raw.validator,
+		webui: raw.webui,
+		webuiRoot: raw.webuiRoot,
 	};
 }

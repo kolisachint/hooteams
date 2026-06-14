@@ -1,14 +1,15 @@
 # hooteams
 
-Multi-agent team orchestration on top of [hoocode](https://github.com/kolisachint/hoocode) agents, plus an SSE bridge that exposes the live team event stream to any client — the `hooteams` CLI or [hoocanvas](https://github.com/kolisachint/hoocanvas).
+Multi-agent team orchestration on top of [hoocode](https://github.com/kolisachint/hoocode) agents, plus an SSE bridge that exposes the live team event stream to any client — the `hooteams` CLI, the built-in web UI, or any consumer of the wire format.
 
 ```
 packages/
   dag/            dependency-free task DAG: topological order, ready/blocked, immutable snapshots
   orchestrator/   team execution, planner, agent registry, tagged event channel
   bridge/         SSE fan-out, wire serializer, HTTP routes
+  webui/          live mission control (React + Vite); served by `hooteams start`
 apps/
-  server/         Bun.serve() entry: orchestrator → bridge → HTTP
+  server/         Bun.serve() entry: orchestrator → bridge → HTTP → web UI
   cli/            hooteams start / attach / nudge / status / stop
 ```
 
@@ -39,7 +40,7 @@ After `bun install` the `hooteams` binary is linked globally (via `npm link` in 
 hooteams — multi-agent orchestration for hoocode
 
 Usage:
-  hooteams start  [--config path] [--port 4242] [--resume]  start the team server
+  hooteams start  [--config path] [--port 4242] [--resume] [--no-webui]  start the team server + live web UI
   hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
   hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
   hooteams pending [--host …]                               list approval gates awaiting an answer
@@ -71,19 +72,24 @@ The output file carries `goal`, `roles`, and `tasks`, and `hooteams run` accepts
 
 ### `hooteams start`
 
-Start the team server. Spawns all agents defined in the config and opens an HTTP/SSE endpoint.
+Start the team server. Spawns all agents defined in the config, opens an HTTP/SSE endpoint, and serves the live web UI from the **same port** — open `http://localhost:4242` in a browser to watch the team work in real time (token streams, tool calls, nudges, DAG progress). Because the UI is served from the same origin as the bridge there's no CORS or host config: it just works on whatever `--port` you choose.
+
+The first `hooteams start` after install builds the web UI once (`tsc + vite build`); subsequent starts reuse the built assets. Pass `--no-webui` to run headless (API only).
 
 ```bash
 hooteams start --config hooteams.config.json --port 4242
 ```
 
-| Flag       | Default                 | Description                                     |
-|------------|-------------------------|-------------------------------------------------|
-| `--config` | `hooteams.config.json`  | Path to config file. Missing default → empty team (agents spawned via planner or API) |
-| `--port`   | `4242`                  | HTTP port to listen on                          |
-| `--resume` | off                     | Restore and continue the newest interrupted run from session storage |
+| Flag         | Default                 | Description                                     |
+|--------------|-------------------------|-------------------------------------------------|
+| `--config`   | `hooteams.config.json`  | Path to config file. Missing default → empty team (agents spawned via planner or API) |
+| `--port`     | `4242`                  | HTTP port for the API/SSE bridge **and** the web UI |
+| `--resume`   | off                     | Restore and continue the newest interrupted run from session storage |
+| `--no-webui` | off                     | Do not serve the web UI (run API only)          |
 
 Shuts down cleanly on `SIGINT` / `SIGTERM` (aborts agents, closes SSE streams, stops the server).
+
+> The web UI lives in `packages/webui` (`@kolisachint/hooteams-webui`). For UI development run `bun run --filter @kolisachint/hooteams-webui dev` (Vite dev server with HMR) and point it at a running bridge via `VITE_HOOTEAMS_HOST`, or rebuild the bundled assets with `bun run build:webui`.
 
 ### `hooteams run`
 
@@ -114,7 +120,7 @@ The file holds the task graph (a bare task array works too):
 
 Top-level file fields besides `tasks`: `goal` (what the run pursues — judged by the goal validator when one is configured) and `roles` (per-run role configs merged into the team, e.g. from `hooteams plan`).
 
-Each task runs on a fresh agent with its own persisted session under `~/.hooteams/sessions`, with the human-in-the-loop protocol appended to its system prompt: an agent that needs a human decision ends its reply with `AWAITING_APPROVAL: <question> | <option1>, <option2>` and the task pauses (releasing its concurrency slot) until someone answers — from this CLI, `hoocode --team`, or hoocanvas. First answer wins.
+Each task runs on a fresh agent with its own persisted session under `~/.hooteams/sessions`, with the human-in-the-loop protocol appended to its system prompt: an agent that needs a human decision ends its reply with `AWAITING_APPROVAL: <question> | <option1>, <option2>` and the task pauses (releasing its concurrency slot) until someone answers — from this CLI, `hoocode --team`, or the web UI. First answer wins.
 
 ### `hooteams pending` / `hooteams resume`
 
@@ -362,7 +368,7 @@ Embedders can override this entirely by passing their own resolver: `startServer
 
 ## HTTP API
 
-The server exposes an HTTP API that any client (CLI, hoocanvas, curl) can use.
+The server exposes an HTTP API that any client (CLI, the web UI, curl) can use.
 
 | Route                   | Method | Description                                                            |
 |-------------------------|--------|------------------------------------------------------------------------|
@@ -485,7 +491,7 @@ const context = await memory.bootstrapContext(); // digest for a new run's promp
 - The orchestrator imports `@kolisachint/hoocode-agent-core` (the `Agent` class). hoocode never imports hooteams.
 - `TeamChannel` wraps every agent's `subscribe()`, tags each `AgentEvent` with `{ role, agentId, ts }`, and keeps a 100-event ring buffer per agent so late subscribers replay what they missed.
 - The bridge serializer strips accumulated state from streaming events (`message_update` carries only the delta) — clients accumulate buffers themselves.
-- hoocanvas has no npm dependency on this repo; it only knows the SSE wire format.
+- The web UI (`packages/webui`) re-declares the wire types instead of importing the orchestrator — it only depends on the SSE/HTTP wire format, so the contract stays decoupled from the server internals.
 
 ---
 

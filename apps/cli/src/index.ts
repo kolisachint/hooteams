@@ -1,12 +1,14 @@
 #!/usr/bin/env bun
 import { loadConfig, startServer } from "@kolisachint/hooteams-server";
+import { webuiBuilt, webuiDist } from "@kolisachint/hooteams-webui";
+import { dirname } from "node:path";
 import { attach, nudge, pending, plan, resume, run, status, stop } from "./commands.js";
 
 const USAGE = `hooteams — multi-agent orchestration for hoocode
 
 Usage:
-  hooteams start  [--config path] [--port 4242] [--resume] [--allow-autonomous]
-                                                           start the team server
+  hooteams start  [--config path] [--port 4242] [--resume] [--allow-autonomous] [--no-webui]
+                                                           start the team server + live web UI
   hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
   hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
   hooteams pending [--host …]                               list approval gates awaiting an answer
@@ -20,6 +22,7 @@ Options:
   --host     bridge base URL (default http://localhost:4242)
   --resume   restore and continue an interrupted run on startup
   --allow-autonomous  skip the human-in-the-loop completion gate (HITL is on by default)
+  --no-webui  do not serve the live web UI (served on the same port by default)
   --detach   print the run id and exit instead of following the run
   --out      write the dry-run plan to this file (hooteams run accepts it)
   --model    planner model id for hooteams plan (default claude-sonnet-4-5)
@@ -53,12 +56,25 @@ try {
 		case "start": {
 			const config = await loadConfig(readFlag("config"));
 			const portFlag = readFlag("port");
+			// First run after install: build the web UI so `hooteams start` can serve
+			// live mission control without a separate build step.
+			if (!args.includes("--no-webui") && !webuiBuilt()) {
+				console.log("building live web UI (first run, one-time)…");
+				const built = Bun.spawnSync(["bun", "run", "build"], { cwd: dirname(webuiDist), stdout: "inherit", stderr: "inherit" });
+				if (!built.success) console.log("web UI build failed — continuing without it (run `bun run build:webui` to retry)");
+			}
 			const running = startServer(config, {
 				port: portFlag ? Number(portFlag) : undefined,
 				resumeInterrupted: args.includes("--resume") || undefined,
 				allowAutonomous: args.includes("--allow-autonomous") || undefined,
+				webui: args.includes("--no-webui") ? false : undefined,
 			});
 			console.log(`hooteams server listening on http://localhost:${running.port}`);
+			if (running.webuiRoot) {
+				console.log(`live web UI:  http://localhost:${running.port}  ← open in a browser to watch the team`);
+			} else if (!args.includes("--no-webui")) {
+				console.log(`web UI not built — run \`bun run build:webui\` to enable live mission control`);
+			}
 			if (config.team.length > 0) console.log(`team: ${config.team.map((role) => role.role).join(", ")}`);
 			const shutdown = async () => {
 				await running.stop();
