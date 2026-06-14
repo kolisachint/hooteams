@@ -9,6 +9,7 @@ import {
 	type StreamFn,
 } from "@kolisachint/hoocode-agent-core";
 import { getModel, type Model } from "@kolisachint/hoocode-ai";
+import { randomUUID } from "node:crypto";
 import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import { createAskAgentTool, createDelegateTaskTool } from "./planner.js";
 import type { Team } from "./team.js";
@@ -174,6 +175,14 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 		if (options.streamFn) {
 			harness.agent.streamFn = options.streamFn;
 		}
+		const agentId = randomUUID();
+		// Register the node as a messaging target so a concurrently-running peer's
+		// delegate_task/ask_agent can reach it. dispose() releases it when the node
+		// settles, so a finished node stops being addressable (peer messaging is for
+		// live nodes; cross-phase coordination goes through shared memory instead).
+		if (options.team) {
+			options.team.adopt(node.role, agentId, harness.agent);
+		}
 		return {
 			// AgentHarness also emits harness-own events (save_point, queue_update,
 			// …) its subscribe type reflects; the orchestrator filters by event
@@ -183,7 +192,9 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 				steer: (text) => harness.steer(text),
 				subscribe: (listener) => harness.subscribe((event) => listener(event as AgentEvent)),
 			},
+			agentId,
 			sessionId: (await session.getMetadata()).id,
+			dispose: options.team ? () => options.team!.release(node.role, agentId) : undefined,
 		};
 	};
 }

@@ -24,6 +24,12 @@ export interface NodeHandle {
 	agentId?: string;
 	/** Session id of the node's own conversation, recorded in the run trace. */
 	sessionId?: string;
+	/**
+	 * Released when the node is torn down (settled or about to retry), e.g. to
+	 * drop a messaging registration the factory set up. Called at most once per
+	 * handle; a throw is swallowed so cleanup can never block settlement.
+	 */
+	dispose?: () => void;
 }
 
 /**
@@ -168,6 +174,8 @@ interface ActiveNode {
 	agentId: string;
 	sessionId?: string;
 	unsubscribe: () => void;
+	/** Factory cleanup (e.g. drop the node's messaging registration); called once on teardown. */
+	dispose?: () => void;
 	/** Messages of the most recent agent_end, used as the node's results. */
 	lastMessages?: AgentMessage[];
 	paused: boolean;
@@ -484,6 +492,7 @@ export class TeamOrchestrator {
 				agentId: handle.agentId ?? randomUUID(),
 				sessionId: handle.sessionId,
 				unsubscribe: () => {},
+				dispose: handle.dispose,
 				paused: false,
 				runActive: false,
 			};
@@ -698,6 +707,13 @@ export class TeamOrchestrator {
 		const active = this.active.get(taskId);
 		if (active) {
 			active.unsubscribe();
+			// Drop the node's messaging registration (or any other factory cleanup)
+			// the moment it's torn down — on retry a fresh harness re-registers.
+			try {
+				active.dispose?.();
+			} catch {
+				// Cleanup is best-effort; a throwing dispose must not block settlement.
+			}
 			this.active.delete(taskId);
 		}
 		const node = this.dag.get(taskId);

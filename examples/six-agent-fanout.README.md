@@ -35,8 +35,9 @@ Then: `hooteams run examples/six-agent-fanout.json`.
 
 ## Coordination board (shared task list + conflict list)
 
-Workers are blind to each other during the parallel phase, so they coordinate through
-the shared `TeamMemory` (`memory_read`/`memory_write`), not by messaging:
+The shared `TeamMemory` (`memory_read`/`memory_write`) is the primary coordination
+channel — reliable, asynchronous, and it survives after an agent finishes. (Live
+siblings can also `ask_agent` each other directly; see caveat 1.)
 
 - The `lead` mints a short board id in the contract; workers prefix all keys with
   `board/<id>/`.
@@ -47,10 +48,14 @@ the shared `TeamMemory` (`memory_read`/`memory_write`), not by messaging:
 
 ## Caveats found in review (read before relying on this)
 
-1. **`ask_agent` / `delegate_task` do not reach DAG nodes in this static run path** —
-   they only route to Team-spawned agents, and orchestrator nodes are never Team
-   members. The prompts tell agents to coordinate via memory only. Do not reintroduce
-   messaging-tool instructions here.
+1. **`ask_agent` / `delegate_task` reach only *concurrently-live* peers.** The
+   factory now registers each node as a messaging target (`Team.adopt`) on dispatch
+   and releases it on settle, so siblings running at the same time (the four workers)
+   can message each other. But a node that has finished is released and is no longer
+   addressable — so the workers cannot ask the `lead` (already done), and the
+   `integrator` cannot ask the workers (all done by then). Those cross-phase cases use
+   the memory board. Also note `ask_agent` resolves on the target's *next* `agent_end`,
+   which can race the target's own task — prefer the board when timing matters.
 2. **Memory is project-scoped, not run-scoped.** Coordination keys can collide across
    runs and leak into the next run's bootstrap context. Mitigated by the per-run
    `board/<id>/` namespace and a "ignore prior-run board entries" instruction in the
