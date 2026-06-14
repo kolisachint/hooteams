@@ -517,6 +517,37 @@ describe("TeamOrchestrator", () => {
 		expect(events.at(-1)?.type).toBe("dag_complete");
 	});
 
+	test("a GOAL_UNMET on an upstream task also re-runs its dependents", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		dag.add({ id: "b", role: "coder", deps: ["a"] });
+		const { promptOrder, createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+		let round = 0;
+
+		await new TeamOrchestrator(dag, {
+			session,
+			channel,
+			createHarness,
+			validator: { validate: async () => (++round === 1 ? "GOAL_UNMET: a is wrong | a" : "GOAL_MET") },
+		}).run();
+
+		expect(round).toBe(2);
+		// b ran once, then re-ran after a's rework against the corrected output.
+		expect(promptOrder).toEqual(["a", "b", "a", "b"]);
+		expect(dag.get("a")?.status).toBe("done");
+		expect(dag.get("b")?.status).toBe("done");
+		expect(
+			events.some(
+				(event) => event.type === "task_retried" && event.taskId === "b" && String((event as { error?: string }).error).includes('upstream "a"'),
+			),
+		).toBe(true);
+		expect(events.at(-1)?.type).toBe("dag_complete");
+	});
+
 	test("an unmet verdict with no rounds left fails the run", async () => {
 		const session = await new InMemorySessionRepo().create();
 		const dag = new TaskDag();

@@ -922,7 +922,34 @@ export class TeamOrchestrator {
 		}
 		// Send the named task back for rework; the dag is open again, so the
 		// run continues and the next completion triggers another validation pass.
-		this.retryNode(node, undefined, `goal validation: ${reason}`, false);
+		this.reworkWithDependents(node, `goal validation: ${reason}`);
+	}
+
+	/**
+	 * Send a node back for rework and reset its already-done dependents to idle,
+	 * so they re-run against the corrected output instead of keeping results
+	 * computed from the node's previous (rejected) work. The dag holds the
+	 * dependents blocked until the reworked node completes again, so ordering is
+	 * preserved. Dependents don't consume their own retry budget — the rerun is
+	 * not their failure.
+	 */
+	private reworkWithDependents(node: TaskNode, error: string): void {
+		for (const dependentId of this.dag.dependentsOf(node.id)) {
+			if (this.dag.get(dependentId)?.status !== "done") continue;
+			const dependent = this.dag.resetToIdle(dependentId);
+			const reason = `re-run: upstream "${node.id}" was reworked`;
+			this.persist("task_retry", { runId: this.runId, taskId: dependentId, attempt: dependent.attempts ?? 0, error: reason, ts: Date.now() });
+			this.publish({
+				type: "task_retried",
+				taskId: dependentId,
+				role: dependent.role,
+				agentId: this.runId,
+				attempt: dependent.attempts ?? 0,
+				error: reason,
+				ts: Date.now(),
+			});
+		}
+		this.retryNode(node, undefined, error, false);
 	}
 
 	/** Goal + every task's output, as the validator's prompt. */

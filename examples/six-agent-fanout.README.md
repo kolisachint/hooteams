@@ -26,7 +26,7 @@ This plan only behaves as designed when the server runs with these in
 {
   "allowAutonomous": true,   // gate fires ONLY at the integrator's marker;
                              // false (default) gates every task instead
-  "validator": "You are the goal validator. Judge whether the URL shortener goal was actually achieved from the task outputs. When it was not, name the integrator task to re-run (see caveat below).",
+  "validator": "You are the goal validator. Judge whether the URL shortener goal was actually achieved from the task outputs. When it was not, name the single task whose work is wrong to re-run — its dependents re-run automatically.",
   "memory": true             // on by default; powers the coordination board
 }
 ```
@@ -86,10 +86,11 @@ with its disposition: **[Fixed]** (code changed), **[Mitigated]** (handled in th
    read-modify-write inside the store's serialized chain, so many agents can append to
    one shared list (`conflicts`) without clobbering each other.
 
-7. **Validator rework is non-cascading.** **[Mitigated]** `dag.resetToIdle` resets only
-   the named node, so bouncing an upstream worker would leave `integrate` stale. The
-   validator prompt aims rework at the **integrator**; deep correctness rests on the
-   integrator's tests passing before its gate.
+7. **Validator rework is non-cascading.** **[Fixed]** When the validator bounces a node,
+   the orchestrator now resets its already-done transitive dependents to idle too
+   (`TaskDag.dependentsOf` + `reworkWithDependents`), so e.g. bouncing a worker re-runs
+   the `integrator` against the corrected work instead of leaving it stale. The dag
+   keeps dependents blocked until the reworked node completes, preserving order.
 
 8. **The integrator approval gate can loop.** **[Mitigated]** On resume the chosen
    option is just steered back, so a re-emitted marker would re-gate forever. The

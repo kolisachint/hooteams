@@ -156,6 +156,33 @@ export class TaskDag {
 		return this.snapshot(node);
 	}
 
+	/**
+	 * Ids of every node that transitively depends on `id` (its descendants in the
+	 * dependency graph). Used to re-run a reworked node's downstream so dependents
+	 * don't keep stale outputs computed from the node's previous result.
+	 */
+	dependentsOf(id: string): string[] {
+		const directDependents = new Map<string, string[]>();
+		for (const node of this.nodes.values()) {
+			for (const dep of node.deps) {
+				const list = directDependents.get(dep);
+				if (list) list.push(node.id);
+				else directDependents.set(dep, [node.id]);
+			}
+		}
+		const result: string[] = [];
+		const seen = new Set<string>();
+		const stack = [...(directDependents.get(id) ?? [])];
+		while (stack.length > 0) {
+			const current = stack.pop()!;
+			if (seen.has(current)) continue;
+			seen.add(current);
+			result.push(current);
+			stack.push(...(directDependents.get(current) ?? []));
+		}
+		return result;
+	}
+
 	/** Nodes that can never run because a transitive dependency failed. */
 	blocked(): TaskNode[] {
 		const failed = new Set([...this.nodes.values()].filter((node) => node.status === "error").map((node) => node.id));
