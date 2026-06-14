@@ -92,6 +92,19 @@ describe("ask_agent", () => {
 		expect(answer).toBe("answer: second question");
 	});
 
+	test("correlates the answer to the asked question across prior unrelated replies", async () => {
+		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel, streamFn: echoStreamFn });
+		const agent = team.spawn({ role: "helper", systemPrompt: "help", model: "fake-model" });
+		// Two prior runs leave unrelated assistant replies in the transcript; the
+		// answer must be the reply that follows our own question, not the latest
+		// reply that happened to be there.
+		await agent.prompt("first unrelated task");
+		await agent.prompt("second unrelated task");
+
+		const answer = await askAgent(team, "helper", "the real question");
+		expect(answer).toBe("answer: the real question");
+	});
+
 	test("rejects unknown roles with the available roles listed", async () => {
 		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel, streamFn: echoStreamFn });
 		team.spawn({ role: "coder", systemPrompt: "code", model: "fake-model" });

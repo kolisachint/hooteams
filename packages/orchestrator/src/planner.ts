@@ -142,14 +142,42 @@ export interface AskAgentOptions {
 	defaultTimeoutSeconds?: number;
 }
 
+/** The reply that followed our steered question, or why none could be returned. */
+type AnswerLookup = { kind: "answer"; text: string } | { kind: "error"; error: string } | undefined;
+
 /**
  * Request-response messaging between agents: steer `question` into the agent
- * registered under `role` and resolve with the final assistant text of its
- * next completed run (its next agent_end on the team channel). Rejects on a
- * team_error for the role, or when timeoutMs elapses first. Pass timeoutMs 0
- * to wait indefinitely.
+ * registered under `role` and resolve with the reply to *that question*. The
+ * answer is correlated by transcript position — the first assistant message
+ * after our own steered user message — not merely the target's next agent_end,
+ * so an unrelated run of the same agent that happens to settle first cannot
+ * resolve us with the wrong content. Each agent_end (and team_error) for the
+ * role re-checks the transcript; we settle only once our reply is present.
+ * Rejects on a team_error before our answer lands, or on timeout. Pass
+ * timeoutMs 0 to wait indefinitely.
  */
 export function askAgent(team: Team, role: string, question: string, timeoutMs = 120_000): Promise<string> {
+	const agent = team.get(role);
+	if (!agent) {
+		return Promise.reject(new Error(`No agent for role "${role}"`));
+	}
+	// Snapshot the log length now so we only consider messages added after we ask.
+	const baseline = agent.state.messages.length;
+	const findAnswer = (): AnswerLookup => {
+		const messages = agent.state.messages as AgentMessage[];
+		for (let i = baseline; i < messages.length; i++) {
+			const message = messages[i]!;
+			if (message.role !== "user" || !extractMessageText(message).includes(question)) continue;
+			for (let j = messages.length - 1; j > i; j--) {
+				const reply = messages[j]!;
+				if (reply.role !== "assistant") continue;
+				const errorMessage = (reply as { errorMessage?: string }).errorMessage;
+				return errorMessage ? { kind: "error", error: errorMessage } : { kind: "answer", text: extractMessageText(reply) };
+			}
+			return undefined; // our question is in the log but has no reply yet
+		}
+		return undefined; // our question has not been processed yet
+	};
 	return new Promise<string>((resolve, reject) => {
 		let settled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -161,12 +189,21 @@ export function askAgent(team: Team, role: string, question: string, timeoutMs =
 			if (timer !== undefined) clearTimeout(timer);
 			apply();
 		};
-		// Subscribe before steering so an answer that lands immediately can't be missed.
+		const tryResolve = (found: AnswerLookup): void => {
+			if (!found) return;
+			if (found.kind === "error") settle(() => reject(new Error(`Agent "${role}" failed while answering: ${found.error}`)));
+			else settle(() => resolve(found.text));
+		};
+		// Subscribe before steering so a reply that lands immediately can't be missed.
 		unsubscribe = team.channel.subscribe((event) => {
 			if (event.type === "agent_end") {
-				settle(() => resolve(lastAssistantText(event.messages)));
+				// A run ended — resolve only if it was the one that answered us.
+				tryResolve(findAnswer());
 			} else if (event.type === "team_error") {
-				settle(() => reject(new Error(`Agent "${role}" failed while answering: ${event.error}`)));
+				// Tolerate an unrelated failure if our answer already landed.
+				const found = findAnswer();
+				if (found?.kind === "answer") settle(() => resolve(found.text));
+				else settle(() => reject(new Error(`Agent "${role}" failed while answering: ${event.error}`)));
 			}
 		}, role);
 		if (timeoutMs > 0) {
@@ -181,15 +218,6 @@ export function askAgent(team: Team, role: string, question: string, timeoutMs =
 			settle(() => reject(err instanceof Error ? err : new Error(String(err))));
 		}
 	});
-}
-
-/** Text of the last assistant message in a run's transcript ("" when there is none). */
-function lastAssistantText(messages: AgentMessage[]): string {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const message = messages[i]!;
-		if (message.role === "assistant") return extractMessageText(message);
-	}
-	return "";
 }
 
 /**
