@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="hoo-favicon-light-title">
+  <title id="hoo-favicon-light-title">Hoo favicon — light</title>
+  <rect width="32" height="32" rx="6" fill="#FAFAFA"/>
+  <line x1="11" y1="8" x2="11" y2="25" stroke="#09090B" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M11,16.6 A4.8,4.8 0 0 1 20.6,16.6 L20.6,25" fill="none" stroke="#09090B" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="16" cy="20" r="1.9" fill="#00F0FF"/>
+</svg>

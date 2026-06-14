@@ -1,4 +1,11 @@
-# hooteams
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/hooteams.svg">
+    <img alt="HooTeams" src="assets/hooteams-light.svg" height="64">
+  </picture>
+</p>
+
+<p align="center">Multi-agent team orchestration with a live event stream.</p>
 
 Multi-agent team orchestration on top of [hoocode](https://github.com/kolisachint/hoocode) agents, plus an SSE bridge that exposes the live team event stream to any client — the `hooteams` CLI, the built-in web UI, or any consumer of the wire format.
 
