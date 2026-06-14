@@ -136,6 +136,35 @@ describe("TeamOrchestrator", () => {
 		expect(runEnd).toEqual([{ runId: "run-1", status: "complete", ts: expect.any(Number) }]);
 	});
 
+	test("broadcasts a dag_snapshot on the live channel with structure and final statuses", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		dag.add({ id: "b", role: "tester", deps: ["a"] });
+		const { createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+
+		await new TeamOrchestrator(dag, { session, channel, createHarness, runId: "run-snap" }).run();
+
+		const snapshots = events.filter((event) => event.type === "dag_snapshot");
+		// At least the run-start snapshot fires; every snapshot is run-level.
+		expect(snapshots.length).toBeGreaterThan(0);
+		for (const snapshot of snapshots) {
+			expect(snapshot.role).toBe("orchestrator");
+			expect(snapshot.runId).toBe("run-snap");
+		}
+		// The first snapshot carries the dag structure (nodes + deps).
+		const first = snapshots[0]!;
+		expect(Object.keys(first.dag).sort()).toEqual(["a", "b"]);
+		expect(first.dag.b?.deps).toEqual(["a"]);
+		// The last snapshot reflects the settled statuses.
+		const last = snapshots.at(-1)!;
+		expect(last.dag.a?.status).toBe("done");
+		expect(last.dag.b?.status).toBe("done");
+	});
+
 	test("a failed node blocks dependents and settles the run as failed", async () => {
 		const session = await new InMemorySessionRepo().create();
 		const dag = new TaskDag();

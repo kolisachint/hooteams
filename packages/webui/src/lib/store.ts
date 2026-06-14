@@ -1,11 +1,91 @@
 import { create } from "zustand";
-import type { AgentState, ConnectionStatus, TeamEvent, ToolChipState } from "./types";
+import type { AgentState, ConnectionStatus, DagNode, DagState, RunInfo, TaskStatus, TeamEvent, ToolChipState } from "./types";
 
 interface Store {
 	agents: Map<string, AgentState>;
+	/** Live task graph for the active run, built from dag_snapshot + task_* events. */
+	runInfo: RunInfo | null;
 	connection: ConnectionStatus;
 	setConnection: (status: ConnectionStatus) => void;
 	dispatch: (event: TeamEvent) => void;
+}
+
+/** Map an orchestrator/agent status string onto the viewer's TaskStatus. */
+function mapStatus(status: string): TaskStatus {
+	switch (status) {
+		case "running":
+		case "streaming":
+		case "thinking":
+		case "tool":
+			return "running";
+		case "done":
+		case "completed":
+			return "done";
+		case "error":
+		case "failed":
+			return "error";
+		case "pending":
+		case "paused":
+			return "pending";
+		case "retrying":
+		case "retry":
+			return "retrying";
+		default:
+			return "idle";
+	}
+}
+
+function patchNode(runInfo: RunInfo, taskId: string, patch: Partial<DagNode>): RunInfo {
+	const current = runInfo.dag[taskId];
+	if (!current) return runInfo;
+	const dag: DagState = { ...runInfo.dag, [taskId]: { ...current, ...patch } };
+	return { ...runInfo, dag };
+}
+
+/** Fold run/dag-level events into the live task graph. */
+function reduceRun(runInfo: RunInfo | null, event: TeamEvent): RunInfo | null {
+	switch (event.type) {
+		case "dag_snapshot": {
+			const dag: DagState = {};
+			for (const [taskId, node] of Object.entries(event.dag)) {
+				dag[taskId] = {
+					id: node.id ?? taskId,
+					role: node.role ?? taskId,
+					deps: node.deps ?? [],
+					status: mapStatus(node.status),
+					retries: node.retries,
+					advisor: node.advisor,
+					gate: node.gate,
+					results: node.results,
+				};
+			}
+			const settled = runInfo?.status === "done" || runInfo?.status === "error";
+			return {
+				runId: event.runId,
+				goal: event.goal ?? runInfo?.goal,
+				dag,
+				status: settled ? runInfo.status : "running",
+				startedAt: runInfo?.startedAt ?? event.ts,
+			};
+		}
+		case "task_started":
+			return runInfo ? patchNode(runInfo, event.taskId, { status: "running" }) : runInfo;
+		case "task_finished":
+			return runInfo ? patchNode(runInfo, event.taskId, { status: event.status }) : runInfo;
+		case "task_retried": {
+			if (!runInfo) return runInfo;
+			const node = runInfo.dag[event.taskId];
+			return patchNode(runInfo, event.taskId, { status: "retrying", retries: (node?.retries ?? 0) + 1 });
+		}
+		case "task_resumed":
+			return runInfo ? patchNode(runInfo, event.taskId, { status: "running" }) : runInfo;
+		case "dag_complete":
+			return runInfo ? { ...runInfo, status: "done", endedAt: event.ts } : runInfo;
+		case "dag_failed":
+			return runInfo ? { ...runInfo, status: "error", endedAt: event.ts } : runInfo;
+		default:
+			return runInfo;
+	}
 }
 
 function emptyAgent(role: string, agentId: string): AgentState {
@@ -123,13 +203,18 @@ function reduce(agent: AgentState, event: TeamEvent): AgentState {
 
 export const useStore = create<Store>((set) => ({
 	agents: new Map(),
+	runInfo: null,
 	connection: "connecting",
 	setConnection: (status) => set({ connection: status }),
 	dispatch: (event) =>
 		set((state) => {
+			const runInfo = reduceRun(state.runInfo, event);
+			// Run/dag-level events (role "orchestrator") drive the task graph only —
+			// they must not spawn an agent card.
+			if (event.role === "orchestrator") return { runInfo };
 			const agents = new Map(state.agents);
 			const current = agents.get(event.role) ?? emptyAgent(event.role, event.agentId);
 			agents.set(event.role, reduce(current, event));
-			return { agents };
+			return { agents, runInfo };
 		}),
 }));
