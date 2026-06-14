@@ -12,6 +12,9 @@ const portFlag = readFlag("port");
 const running = startServer(config, { port: portFlag ? Number(portFlag) : undefined });
 
 console.log(`hooteams server listening on http://localhost:${running.port}`);
+if (running.webuiRoot) {
+	console.log(`  live web UI             http://localhost:${running.port}/`);
+}
 console.log(`  GET  /events            all-agent SSE stream`);
 console.log(`  GET  /events/:role      single-agent SSE stream (replay + live)`);
 console.log(`  POST /steer             { role, message }`);

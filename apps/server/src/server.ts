@@ -19,6 +19,7 @@ import {
 	TeamOrchestrator,
 	type TeamOptions,
 } from "@kolisachint/hooteams-orchestrator";
+import { serveWebuiAsset, webuiBuilt, webuiDist } from "@kolisachint/hooteams-webui";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +31,8 @@ export interface RunningServer {
 	team: Team;
 	bridge: SSEBridge;
 	port: number;
+	/** Directory the web UI is served from, or undefined when the UI is disabled/unbuilt. */
+	webuiRoot?: string;
 	/**
 	 * Expose a live TeamOrchestrator run on the HITL routes (/tasks/pending,
 	 * /tasks/:id/resume, /trace). The session is the orchestrator's run
@@ -54,6 +57,10 @@ export interface StartOptions {
 	resumeInterrupted?: boolean;
 	/** Overrides config.allowAutonomous. When false (default), HITL completion gate is active. */
 	allowAutonomous?: boolean;
+	/** Overrides config.webui. When false, the bundled web UI is not served. */
+	webui?: boolean;
+	/** Overrides config.webuiRoot (the built web UI directory). */
+	webuiRoot?: string;
 }
 
 export function startServer(config: ServerConfig, options: StartOptions = {}): RunningServer {
@@ -236,6 +243,27 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 
 	const router = createRouter(team, channel, bridge, { hitl: () => activeRun, startRun, sessionsRoot });
 
+	// API paths own their responses (including their own 404s, e.g. "no active
+	// run"); only genuinely unrouted GETs fall through to the web UI shell.
+	const isApiPath = (path: string): boolean => {
+		const clean = path.replace(/\/+$/, "") || "/";
+		return (
+			clean === "/health" ||
+			clean === "/status" ||
+			clean === "/steer" ||
+			clean === "/stop" ||
+			clean === "/runs" ||
+			clean === "/tasks/pending" ||
+			clean === "/trace" ||
+			clean === "/sessions" ||
+			clean === "/events" ||
+			clean.startsWith("/events/") ||
+			clean.startsWith("/sessions/") ||
+			/^\/tasks\/[^/]+\/resume$/.test(clean) ||
+			/^\/runs\/[^/]+\/trace$/.test(clean)
+		);
+	};
+
 	// Config-spawned agents get the team-collaboration tools on top of their
 	// own: ask_agent for request-response messaging, and (when memory is on)
 	// the shared cross-run memory tools.
@@ -275,12 +303,17 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		server.stop(true);
 	};
 
+	// Serve the bundled web UI (live mission control) from the same port as the
+	// bridge unless disabled or unbuilt. Same origin → no CORS, no host config.
+	const webuiRoot = options.webuiRoot ?? config.webuiRoot ?? webuiDist;
+	const webuiEnabled = (options.webui ?? config.webui ?? true) && webuiBuilt(webuiRoot);
+
 	const server = Bun.serve({
 		port: options.port ?? config.port ?? Number(process.env.PORT ?? DEFAULT_PORT),
 		// SSE clients (/events) hold the connection open indefinitely; Bun's
 		// default 10s idleTimeout would kill them whenever the team goes quiet.
 		idleTimeout: 0,
-		fetch(request) {
+		async fetch(request) {
 			const url = new URL(request.url);
 			if (request.method === "POST" && url.pathname === "/stop") {
 				// stop(true) force-closes every connection including this one,
@@ -288,9 +321,25 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 				setTimeout(() => void stop(), 100);
 				return Response.json({ ok: true, stopping: true });
 			}
-			return router.fetch(request);
+			const response = await router.fetch(request);
+			// Genuinely unrouted GETs fall through to the web UI (its assets and
+			// client-side routes); API paths keep their own responses and 404s.
+			if (webuiEnabled && request.method === "GET" && response.status === 404 && !isApiPath(url.pathname)) {
+				const asset = await serveWebuiAsset(url.pathname, webuiRoot);
+				if (asset) return asset;
+			}
+			return response;
 		},
 	});
 
-	return { server, channel, team, bridge, port: server.port ?? 0, attachOrchestrator, stop };
+	return {
+		server,
+		channel,
+		team,
+		bridge,
+		port: server.port ?? 0,
+		webuiRoot: webuiEnabled ? webuiRoot : undefined,
+		attachOrchestrator,
+		stop,
+	};
 }
