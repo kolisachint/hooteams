@@ -1,7 +1,5 @@
 #!/usr/bin/env bun
 import { loadConfig, startServer } from "@kolisachint/hooteams-server";
-import { webuiBuilt, webuiDist } from "@kolisachint/hooteams-webui";
-import { dirname } from "node:path";
 import { attach, nudge, pending, plan, resume, run, status, stop } from "./commands.js";
 
 const USAGE = `hooteams — multi-agent orchestration for hoocode
@@ -56,13 +54,9 @@ try {
 		case "start": {
 			const config = await loadConfig(readFlag("config"));
 			const portFlag = readFlag("port");
-			// First run after install: build the web UI so `hooteams start` can serve
-			// live mission control without a separate build step.
-			if (!args.includes("--no-webui") && !webuiBuilt()) {
-				console.log("building live web UI (first run, one-time)…");
-				const built = Bun.spawnSync(["bun", "run", "build"], { cwd: dirname(webuiDist), stdout: "inherit", stderr: "inherit" });
-				if (!built.success) console.log("web UI build failed — continuing without it (run `bun run build:webui` to retry)");
-			}
+			// The web UI ships prebuilt (`dist/`) in the published package; we never
+			// build it on the user's machine (that would require devDependencies/
+			// workspace binaries that aren't present in an npm/global install).
 			const running = startServer(config, {
 				port: portFlag ? Number(portFlag) : undefined,
 				resumeInterrupted: args.includes("--resume") || undefined,
@@ -73,7 +67,7 @@ try {
 			if (running.webuiRoot) {
 				console.log(`live web UI:  http://localhost:${running.port}  ← open in a browser to watch the team`);
 			} else if (!args.includes("--no-webui")) {
-				console.log(`web UI not built — run \`bun run build:webui\` to enable live mission control`);
+				console.log(`web UI assets missing from this install — update to the latest release to enable live mission control`);
 			}
 			if (config.team.length > 0) console.log(`team: ${config.team.map((role) => role.role).join(", ")}`);
 			const shutdown = async () => {
