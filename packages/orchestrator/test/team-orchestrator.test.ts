@@ -256,6 +256,81 @@ describe("TeamOrchestrator", () => {
 		expect(requests[0]).toMatchObject({ taskId: "build", kind: "completion", options: ["approve", "revise"] });
 	});
 
+	test("gate:true opens a completion gate at one node in an otherwise autonomous run", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		dag.add({ id: "b", role: "coder", deps: ["a"], gate: true });
+		const { fakes, createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+		const paused = once(channel, "task_paused");
+
+		// Autonomous run: only the gate:true node should pause.
+		const orchestrator = new TeamOrchestrator(dag, { session, channel, createHarness, allowAutonomous: true });
+		const run = orchestrator.run();
+
+		const gate = await paused;
+		expect(gate).toMatchObject({ taskId: "b", options: ["approve", "revise"] });
+		// "a" settled autonomously without a gate.
+		expect(dag.get("a")?.status).toBe("done");
+		expect(events.some((event) => event.type === "task_paused" && event.taskId === "a")).toBe(false);
+
+		expect(orchestrator.resume("b", "approve")).toBe(true);
+		await run;
+		expect(dag.get("b")?.status).toBe("done");
+		// approve settles structurally — the agent ran exactly once (no marker loop).
+		expect(fakes.get("b")?.prompts).toHaveLength(1);
+		expect(events.at(-1)?.type).toBe("dag_complete");
+	});
+
+	test("an advisor node stays live (teardown deferred) until the run finishes", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "arch", role: "arch", advisor: true });
+		dag.add({ id: "impl", role: "impl", deps: ["arch"] });
+		const disposed: string[] = [];
+		let disposedWhenArchSettled: string[] = [];
+		const channel = new TeamChannel();
+		channel.subscribe((event) => {
+			if (event.type === "task_finished" && event.taskId === "arch") disposedWhenArchSettled = [...disposed];
+		});
+
+		const createHarness = (node: TaskNode) => {
+			const fake = new FakeHarness(sayAndFinish);
+			return { harness: fake as unknown as FakeHarness, sessionId: `s-${node.id}`, dispose: () => disposed.push(node.id) };
+		};
+
+		await new TeamOrchestrator(dag, { session, channel, createHarness }).run();
+
+		expect(dag.get("arch")?.status).toBe("done");
+		// The advisor was NOT torn down when its own task settled...
+		expect(disposedWhenArchSettled).not.toContain("arch");
+		// ...the non-advisor impl tore down normally at its settle...
+		expect(disposed).toContain("impl");
+		// ...and the advisor was released only at run finish (after impl).
+		expect(disposed).toContain("arch");
+		expect(disposed.indexOf("arch")).toBeGreaterThan(disposed.indexOf("impl"));
+	});
+
+	test("gate:false suppresses the completion gate in an otherwise HITL run", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "solo", role: "coder", gate: false });
+		const { createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+
+		// HITL run, but the node opts out of gating.
+		await new TeamOrchestrator(dag, { session, channel, createHarness, allowAutonomous: false }).run();
+
+		expect(dag.get("solo")?.status).toBe("done");
+		expect(events.some((event) => event.type === "task_paused")).toBe(false);
+		expect(events.at(-1)?.type).toBe("dag_complete");
+	});
+
 	test("HITL completion gate: revise re-prompts with feedback, then approve settles", async () => {
 		const session = await new InMemorySessionRepo().create();
 		const dag = new TaskDag();
@@ -514,6 +589,37 @@ describe("TeamOrchestrator", () => {
 		expect(promptOrder).toEqual(["a", "a"]);
 		expect(dag.get("a")?.status).toBe("done");
 		expect(events.some((event) => event.type === "task_retried" && event.error === "goal validation: output too short")).toBe(true);
+		expect(events.at(-1)?.type).toBe("dag_complete");
+	});
+
+	test("a GOAL_UNMET on an upstream task also re-runs its dependents", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		dag.add({ id: "b", role: "coder", deps: ["a"] });
+		const { promptOrder, createHarness } = fixture();
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+		let round = 0;
+
+		await new TeamOrchestrator(dag, {
+			session,
+			channel,
+			createHarness,
+			validator: { validate: async () => (++round === 1 ? "GOAL_UNMET: a is wrong | a" : "GOAL_MET") },
+		}).run();
+
+		expect(round).toBe(2);
+		// b ran once, then re-ran after a's rework against the corrected output.
+		expect(promptOrder).toEqual(["a", "b", "a", "b"]);
+		expect(dag.get("a")?.status).toBe("done");
+		expect(dag.get("b")?.status).toBe("done");
+		expect(
+			events.some(
+				(event) => event.type === "task_retried" && event.taskId === "b" && String((event as { error?: string }).error).includes('upstream "a"'),
+			),
+		).toBe(true);
 		expect(events.at(-1)?.type).toBe("dag_complete");
 	});
 

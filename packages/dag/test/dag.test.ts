@@ -41,6 +41,15 @@ describe("topologicalOrder", () => {
 	});
 });
 
+describe("dependentsOf", () => {
+	test("returns transitive descendants and nothing for a leaf", () => {
+		const dag = diamond();
+		expect(new Set(dag.dependentsOf("plan"))).toEqual(new Set(["code", "docs", "test"]));
+		expect(new Set(dag.dependentsOf("code"))).toEqual(new Set(["test"]));
+		expect(dag.dependentsOf("test")).toEqual([]);
+	});
+});
+
 describe("markDone propagation", () => {
 	test("only roots are ready initially", () => {
 		expect(diamond().ready().map((node) => node.id)).toEqual(["plan"]);

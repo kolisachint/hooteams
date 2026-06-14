@@ -390,6 +390,104 @@ describe("per-role tools", () => {
 			rmSync(sessionsRoot, { recursive: true, force: true });
 		}
 	});
+
+	test("adopt registers a messaging target without attaching; release respects adopted + agentId", () => {
+		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel });
+		// spawn() hands back a real Agent we can re-register under another role via adopt().
+		const agent = team.spawn({ role: "spawned", systemPrompt: "s", model: "fake-model" });
+
+		team.adopt("peer", "agent-1", agent);
+		expect(team.has("peer")).toBe(true);
+		expect(team.roles()).toContain("peer");
+
+		// release with a stale agentId must not clear a registration owned by another id.
+		team.release("peer", "other-id");
+		expect(team.has("peer")).toBe(true);
+		// matching id clears it.
+		team.release("peer", "agent-1");
+		expect(team.has("peer")).toBe(false);
+
+		// release is a no-op on spawned (channel-attached) members — those use kill().
+		team.release("spawned");
+		expect(team.has("spawned")).toBe(true);
+	});
+
+	test("createNodeHarnessFactory adopts the node agent so a peer's delegate_task reaches it; dispose releases", async () => {
+		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel, streamFn: textStreamFn() });
+		const sessionsRoot = await mkdtemp(join(tmpdir(), "node-adopt-"));
+		try {
+			const { createNodeHarnessFactory } = await import("../src/node-harness.js");
+			const createHarness = createNodeHarnessFactory({
+				roles: [{ role: "worker", systemPrompt: "do work", model: "fake-model" }],
+				runId: "run-adopt",
+				sessionsRoot,
+				team,
+				resolveModel: () => fakeModel,
+				streamFn: textStreamFn(),
+			});
+
+			expect(team.has("worker")).toBe(false);
+			const handle = await createHarness({ id: "t1", role: "worker", deps: [], status: "idle" });
+			// The node is now addressable by peers, without being attached to the channel.
+			expect(team.has("worker")).toBe(true);
+			expect(team.roles()).toContain("worker");
+
+			// A peer's delegate_task lands a message on the adopted node agent.
+			const delegateTool = createDelegateTaskTool(team);
+			await delegateTool.execute("call-1", { role: "worker", task: "peer-delivered task" } as any);
+			await team.get("worker")!.waitForIdle();
+			expect(JSON.stringify(team.get("worker")!.state.messages)).toContain("peer-delivered task");
+
+			// Teardown drops the registration so a settled node stops being addressable.
+			handle.dispose?.();
+			expect(team.has("worker")).toBe(false);
+		} finally {
+			await rm(sessionsRoot, { recursive: true, force: true });
+		}
+	});
+
+	test("an advisor node stays adopted as a messaging target until the run ends", async () => {
+		const { createNodeHarnessFactory } = await import("../src/node-harness.js");
+		const { TeamOrchestrator } = await import("../src/team-orchestrator.js");
+		const { InMemorySessionRepo } = await import("@kolisachint/hoocode-agent-core");
+		const sessionsRoot = await mkdtemp(join(tmpdir(), "advisor-run-"));
+		try {
+			const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel, streamFn: textStreamFn() });
+			const dag = new TaskDag();
+			dag.add({ id: "arch", role: "arch", advisor: true });
+			dag.add({ id: "impl", role: "impl", deps: ["arch"] });
+			const createHarness = createNodeHarnessFactory({
+				roles: [
+					{ role: "arch", systemPrompt: "arch", model: "fake-model" },
+					{ role: "impl", systemPrompt: "impl", model: "fake-model" },
+				],
+				runId: "advisor-run",
+				sessionsRoot,
+				team,
+				resolveModel: () => fakeModel,
+				streamFn: textStreamFn(),
+			});
+
+			const adoptedAtSettle: Record<string, boolean> = {};
+			const session = await new InMemorySessionRepo().create();
+			await new TeamOrchestrator(dag, {
+				session,
+				createHarness,
+				// Snapshot whether the advisor (arch) is still adopted as each node settles.
+				afterTaskSettle: (node) => {
+					adoptedAtSettle[node.id] = team.has("arch");
+				},
+			}).run();
+
+			// The advisor is still adopted at its own settle and while impl runs after it...
+			expect(adoptedAtSettle.arch).toBe(true);
+			expect(adoptedAtSettle.impl).toBe(true);
+			// ...and released once the run finishes.
+			expect(team.has("arch")).toBe(false);
+		} finally {
+			await rm(sessionsRoot, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("Team.trackStatus reports paused gates", () => {

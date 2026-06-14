@@ -6,6 +6,10 @@ export interface TaskNodeInput {
 	deps?: string[];
 	/** Extra dispatch attempts the node gets after a failed run. Default 0. */
 	retries?: number;
+	/** Per-node approval policy overriding the run default (see TaskNode.gate). */
+	gate?: boolean;
+	/** Keep the node's agent live as a messaging target after it settles (see TaskNode.advisor). */
+	advisor?: boolean;
 }
 
 /**
@@ -22,6 +26,8 @@ export class TaskDag {
 		}
 		const node: TaskNode = { id: input.id, role: input.role, deps: input.deps?.slice() ?? [], status: "idle" };
 		if (input.retries !== undefined) node.retries = input.retries;
+		if (input.gate !== undefined) node.gate = input.gate;
+		if (input.advisor !== undefined) node.advisor = input.advisor;
 		this.nodes.set(input.id, node);
 		return this.snapshot(node);
 	}
@@ -154,6 +160,33 @@ export class TaskDag {
 		delete node.results;
 		delete node.output;
 		return this.snapshot(node);
+	}
+
+	/**
+	 * Ids of every node that transitively depends on `id` (its descendants in the
+	 * dependency graph). Used to re-run a reworked node's downstream so dependents
+	 * don't keep stale outputs computed from the node's previous result.
+	 */
+	dependentsOf(id: string): string[] {
+		const directDependents = new Map<string, string[]>();
+		for (const node of this.nodes.values()) {
+			for (const dep of node.deps) {
+				const list = directDependents.get(dep);
+				if (list) list.push(node.id);
+				else directDependents.set(dep, [node.id]);
+			}
+		}
+		const result: string[] = [];
+		const seen = new Set<string>();
+		const stack = [...(directDependents.get(id) ?? [])];
+		while (stack.length > 0) {
+			const current = stack.pop()!;
+			if (seen.has(current)) continue;
+			seen.add(current);
+			result.push(current);
+			stack.push(...(directDependents.get(current) ?? []));
+		}
+		return result;
 	}
 
 	/** Nodes that can never run because a transitive dependency failed. */

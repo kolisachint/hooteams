@@ -23,6 +23,21 @@ export interface TaskNode {
 	retries?: number;
 	/** Failed attempts consumed so far; set by the orchestrator. */
 	attempts?: number;
+	/**
+	 * Per-node approval policy, overriding the run-wide default: true forces a
+	 * human completion gate before this node settles "done" (even in an otherwise
+	 * autonomous run); false skips it (even in an otherwise HITL run). Unset means
+	 * follow the run default. Lets a run gate only at chosen nodes (e.g. merges).
+	 */
+	gate?: boolean;
+	/**
+	 * When true, the node's agent stays live and addressable (as a messaging
+	 * target) after its task settles "done", until the run ends — instead of
+	 * being torn down at settle. Lets later nodes ask_agent it across phases
+	 * (e.g. a schema owner that answers implementers mid-build). Resident until
+	 * the run finishes; a restored run does not rehydrate live advisors.
+	 */
+	advisor?: boolean;
 }
 
 /** Shape of TaskDag.toJSON(), as persisted in "dag_state" session entries. */

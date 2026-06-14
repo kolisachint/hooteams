@@ -1,0 +1,84 @@
+{
+	"goal": "Build a URL shortener HTTP service in TypeScript: POST /shorten stores a long URL and returns a short code; GET /:code issues a 301 redirect to the original URL. In-memory storage is fine. Ship it with passing tests.",
+	"roles": [
+		{
+			"role": "lead",
+			"model": "claude-sonnet-4-5",
+			"defaultTools": true,
+			"systemPrompt": "You are the team lead. Read the repository, then write a single concrete CONTRACT the other agents build against: the HTTP routes and exact request/response shapes, the storage interface (function signatures), the short-code scheme, and which file each piece lives in. Be specific enough that four agents can work in parallel without talking to each other.\n\nRemind the workers how to coordinate on this run's shared board: post their own status with board_write (key 'task/<their-task>'), add any seam or contract ambiguity to the shared 'conflicts' list with board_append instead of guessing, and board_read to see the board. The board is scoped to this run automatically. You finish before the workers start, so put everything they need in the contract. Output only the contract as your final message. Complete autonomously — do NOT request human approval."
+		},
+		{
+			"role": "worker_storage",
+			"model": "claude-sonnet-4-5",
+			"defaultTools": true,
+			"systemPrompt": "You implement the storage layer (in-memory store: save(url) -> code, resolve(code) -> url) exactly as the contract specifies — match the file path and signatures precisely so the other pieces link up. Post your status with board_write (key 'task/storage'); board_read the board before and during work; if your work collides with the contract or another piece, board_append it to the 'conflicts' list rather than guessing. You may also ask_agent a still-running sibling for a quick answer, but the lead has finished — rely on its contract in your prompt. Write only the storage module. Complete autonomously — do NOT request human approval."
+		},
+		{
+			"role": "worker_shorten",
+			"model": "claude-sonnet-4-5",
+			"defaultTools": true,
+			"systemPrompt": "You implement the POST /shorten endpoint exactly as the contract specifies, importing the storage interface by the contract's signatures (do not implement storage yourself). Match the contract's file path and response shape. Post your status with board_write (key 'task/shorten'); board_read the board; board_append any seam to the 'conflicts' list rather than guessing. You may ask_agent a still-running sibling for a quick answer. Complete autonomously — do NOT request human approval."
+		},
+		{
+			"role": "worker_redirect",
+			"model": "claude-sonnet-4-5",
+			"defaultTools": true,
+			"systemPrompt": "You implement the GET /:code redirect endpoint exactly as the contract specifies: resolve the code via the storage interface and return a 301 to the original URL (404 when unknown). Import storage by the contract's signatures (do not implement it). Post your status with board_write (key 'task/redirect'); board_read the board; board_append any seam to the 'conflicts' list rather than guessing. You may ask_agent a still-running sibling for a quick answer. Complete autonomously — do NOT request human approval."
+		},
+		{
+			"role": "worker_tests",
+			"model": "claude-sonnet-4-5",
+			"defaultTools": true,
+			"systemPrompt": "You write the test suite against the CONTRACT (test-first): cover shorten -> redirect round-trip, unknown-code 404, and the short-code scheme. Test against the routes and signatures the contract specifies, not against any implementation you can see. Post your status with board_write (key 'task/tests'); board_read the board; board_append any contract ambiguity to the 'conflicts' list rather than guessing. Complete autonomously — do NOT request human approval."
+		},
+		{
+			"role": "integrator",
+			"model": "claude-sonnet-4-5",
+			"defaultTools": true,
+			"systemPrompt": "You assemble the four workers' outputs into a runnable service: wire the routes to the storage layer and run the test suite until it passes. First board_read the 'conflicts' list and resolve each open item in the code, board_append'ing a one-line resolution back to 'conflicts' for each. The workers have all finished by the time you run, so consult their outputs (in your prompt) and the board — ask_agent cannot reach a finished worker. When the service is wired and the tests are green, finish with a one-line summary of what shipped. A human approval gate opens automatically before your work is marked done (approve to ship, or revise with feedback, which re-runs you); you do not need to request approval yourself."
+		}
+	],
+	"tasks": [
+		{
+			"id": "contract",
+			"role": "lead",
+			"prompt": "Produce the build contract for the URL shortener described in the team goal, including how the workers should coordinate on the shared board."
+		},
+		{
+			"id": "storage",
+			"role": "worker_storage",
+			"deps": ["contract"],
+			"retries": 1,
+			"prompt": "Implement the storage layer per the contract."
+		},
+		{
+			"id": "shorten",
+			"role": "worker_shorten",
+			"deps": ["contract"],
+			"retries": 1,
+			"prompt": "Implement the POST /shorten endpoint per the contract."
+		},
+		{
+			"id": "redirect",
+			"role": "worker_redirect",
+			"deps": ["contract"],
+			"retries": 1,
+			"prompt": "Implement the GET /:code redirect endpoint per the contract."
+		},
+		{
+			"id": "tests",
+			"role": "worker_tests",
+			"deps": ["contract"],
+			"retries": 1,
+			"prompt": "Write the test suite against the contract (test-first)."
+		},
+		{
+			"id": "integrate",
+			"role": "integrator",
+			"deps": ["storage", "shorten", "redirect", "tests"],
+			"retries": 1,
+			"gate": true,
+			"prompt": "Resolve any open board conflicts, assemble storage + the two endpoints, and run the tests until green. The approval gate opens automatically when you finish."
+		}
+	]
+}

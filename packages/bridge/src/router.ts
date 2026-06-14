@@ -55,6 +55,19 @@ export interface StartRunTask {
 	deps?: string[];
 	/** Extra attempts the task gets after a failed run. Default 0. */
 	retries?: number;
+	/**
+	 * Per-task approval policy overriding the run default: true forces a human
+	 * completion gate before this task settles "done" (even in an autonomous run);
+	 * false skips it. Unset follows the run default. Lets a run gate only at
+	 * chosen tasks (e.g. merges) instead of every task or none.
+	 */
+	gate?: boolean;
+	/**
+	 * When true, the task's agent stays live and addressable after it settles
+	 * "done", until the run ends, so later tasks can ask_agent it across phases
+	 * (e.g. a schema owner answering implementers mid-build).
+	 */
+	advisor?: boolean;
 }
 
 export interface StartRunRequest {

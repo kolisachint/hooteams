@@ -54,6 +54,13 @@ export interface MemoryTaskRecord {
 const truncate = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 /**
+ * Tag stamped on run-scoped coordination-board entries (see createBoardTools).
+ * bootstrapContext skips these so a run's transient task/conflict notes never
+ * leak into a later run's prompts.
+ */
+const BOARD_TAG = "board";
+
+/**
  * Shared knowledge store scoped to a project, not a run: one JSON file per
  * project under memoryRoot, surviving across runs and shared by every agent
  * on the team. Agents read and write it through the memory_read/memory_write
@@ -97,6 +104,38 @@ export class TeamMemory {
 			};
 			// Delete-then-set keeps map order = write recency, so eviction can
 			// drop from the front.
+			entries.delete(key);
+			entries.set(key, entry);
+			while (entries.size > this.maxEntries) {
+				const oldest = entries.keys().next().value as string;
+				entries.delete(oldest);
+			}
+			await this.save(entries);
+			return entry;
+		});
+	}
+
+	/**
+	 * Atomically append a line to the list stored under `key`. The
+	 * read-modify-write runs inside the same serialized chain as every other
+	 * store op, so concurrent appenders never lose each other's items — unlike
+	 * write(), which is a whole-value upsert and would clobber a racing append.
+	 * Creates the key on first append; refreshes recency and keeps createdAt.
+	 */
+	append(key: string, item: string, meta: { tags?: string[]; runId?: string; role?: string } = {}): Promise<MemoryEntry> {
+		return this.enqueue(async () => {
+			const entries = await this.load();
+			const existing = entries.get(key);
+			const now = Date.now();
+			const entry: MemoryEntry = {
+				key,
+				value: existing && existing.value.length > 0 ? `${existing.value}\n${item}` : item,
+				tags: meta.tags ?? existing?.tags ?? [],
+				runId: meta.runId ?? existing?.runId,
+				role: meta.role ?? existing?.role,
+				createdAt: existing?.createdAt ?? now,
+				updatedAt: now,
+			};
 			entries.delete(key);
 			entries.set(key, entry);
 			while (entries.size > this.maxEntries) {
@@ -178,7 +217,9 @@ export class TeamMemory {
 	 * empty, so callers can skip the section entirely.
 	 */
 	async bootstrapContext(limit = 10, maxValueLength = 600): Promise<string | undefined> {
-		const all = await this.list();
+		// Run-scoped board entries are transient coordination state, not durable
+		// project knowledge — exclude them so they don't leak into later runs.
+		const all = (await this.list()).filter((entry) => !entry.tags.includes(BOARD_TAG));
 		if (all.length === 0) return undefined;
 		const lines = all
 			.slice(-limit)
@@ -284,4 +325,74 @@ export function createMemoryWriteTool(memory: TeamMemory, meta: { runId?: string
 			};
 		},
 	};
+}
+
+const boardPrefix = (runId: string): string => `board/${runId}/`;
+const boardKey = (runId: string, key: string): string => `${boardPrefix(runId)}${key.replace(/^\/+/, "")}`;
+
+const boardWriteParams = Type.Object({
+	key: Type.String({ description: "Board entry key relative to this run, e.g. 'task/storage' or 'conflict/dup-type'" }),
+	value: Type.String({ description: "Value to post; rewriting the same key replaces it" }),
+});
+const boardAppendParams = Type.Object({
+	key: Type.String({ description: "Board list key relative to this run, e.g. 'conflicts'" }),
+	item: Type.String({ description: "A line to append to the list" }),
+});
+const boardReadParams = Type.Object({
+	prefix: Type.Optional(Type.String({ description: "Only return entries whose relative key starts with this, e.g. 'task/' or 'conflict/'" })),
+});
+
+/**
+ * Tools for a per-run coordination board: a run-scoped slice of shared memory
+ * (keys live under `board/<runId>/`, tagged so bootstrapContext skips them) so
+ * agents on the same run share a task list and conflict list without colliding
+ * with other runs or polluting future ones. board_write upserts a single key
+ * (one writer per key — e.g. your own status); board_append atomically appends
+ * to a shared list so many agents can add to it concurrently without clobbering
+ * each other; board_read returns this run's board.
+ */
+export function createBoardTools(memory: TeamMemory, meta: { runId: string; role?: string }): AgentTool<any>[] {
+	const tags = meta.role ? [BOARD_TAG, meta.role] : [BOARD_TAG];
+	const write: AgentTool<typeof boardWriteParams> = {
+		name: "board_write",
+		label: "Write Board",
+		description:
+			"Post or update a value on this run's shared coordination board (scoped to this run only). Use it for state " +
+			"with a single owner, e.g. your own status under key 'task/<your-task>'. Rewriting the same key replaces it.",
+		parameters: boardWriteParams,
+		execute: async (_id, params) => {
+			const entry = await memory.write(boardKey(meta.runId, params.key), params.value, { tags, runId: meta.runId, role: meta.role });
+			return { content: [{ type: "text", text: `Posted board entry '${params.key}'.` }], details: { key: entry.key } };
+		},
+	};
+	const append: AgentTool<typeof boardAppendParams> = {
+		name: "board_append",
+		label: "Append Board",
+		description:
+			"Atomically append a line to a shared list on this run's coordination board, e.g. key 'conflicts'. Safe for " +
+			"many agents at once — concurrent appends never overwrite each other (unlike board_write).",
+		parameters: boardAppendParams,
+		execute: async (_id, params) => {
+			const entry = await memory.append(boardKey(meta.runId, params.key), params.item, { tags, runId: meta.runId, role: meta.role });
+			return { content: [{ type: "text", text: `Appended to board list '${params.key}'.` }], details: { key: entry.key } };
+		},
+	};
+	const read: AgentTool<typeof boardReadParams> = {
+		name: "board_read",
+		label: "Read Board",
+		description: "Read this run's shared coordination board: entries posted by any agent on this run. Pass a prefix like 'task/' or 'conflict/' to narrow.",
+		parameters: boardReadParams,
+		execute: async (_id, params) => {
+			const wanted = boardKey(meta.runId, params.prefix ?? "");
+			const entries = (await memory.list()).filter((entry) => entry.key.startsWith(wanted));
+			if (entries.length === 0) {
+				return { content: [{ type: "text", text: "The board is empty." }], details: { entries: 0 } };
+			}
+			const text = entries
+				.map((entry) => `### ${entry.key.slice(boardPrefix(meta.runId).length)}${entry.role ? ` (${entry.role})` : ""}\n${entry.value}`)
+				.join("\n\n");
+			return { content: [{ type: "text", text }], details: { entries: entries.length } };
+		},
+	};
+	return [read, write, append];
 }

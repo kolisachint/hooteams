@@ -16,8 +16,10 @@ interface TeamMember {
 	role: string;
 	agentId: string;
 	agent: Agent;
-	config: RoleConfig;
+	config?: RoleConfig;
 	status: AgentStatus;
+	/** True for agents registered via adopt() — externally owned, not attached to the channel. */
+	adopted?: boolean;
 }
 
 /**
@@ -86,6 +88,32 @@ export class Team {
 		this.channel.attach(config.role, agentId, agent);
 		this.members.set(config.role, { role: config.role, agentId, agent, config, status: "idle" });
 		return agent;
+	}
+
+	/**
+	 * Register an externally-owned agent — e.g. a TeamOrchestrator DAG node — as
+	 * the messaging target for `role`, so delegate_task/ask_agent can reach it.
+	 * Unlike spawn(), the agent is NOT attached to the channel: the orchestrator
+	 * already mirrors a node's events onto the shared bus, so attaching here would
+	 * double-publish every event. Last writer wins when two live nodes share a
+	 * role; release(role, agentId) only clears the entry it still owns. ask_agent
+	 * observes the node's replies through the orchestrator's event mirror, so
+	 * adopted messaging only works while that mirror is live (i.e. mid-run).
+	 */
+	adopt(role: string, agentId: string, agent: Agent): void {
+		this.members.set(role, { role, agentId, agent, status: "idle", adopted: true });
+	}
+
+	/**
+	 * Drop a previously adopted member. No-op for spawned (channel-attached)
+	 * members — those are removed with kill(). The agentId guard avoids clearing
+	 * a newer same-role node that replaced this one before it released.
+	 */
+	release(role: string, agentId?: string): void {
+		const member = this.members.get(role);
+		if (!member || !member.adopted) return;
+		if (agentId !== undefined && member.agentId !== agentId) return;
+		this.members.delete(role);
 	}
 
 	get(role: string): Agent | undefined {

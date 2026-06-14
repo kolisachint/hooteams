@@ -24,6 +24,12 @@ export interface NodeHandle {
 	agentId?: string;
 	/** Session id of the node's own conversation, recorded in the run trace. */
 	sessionId?: string;
+	/**
+	 * Released when the node is torn down (settled or about to retry), e.g. to
+	 * drop a messaging registration the factory set up. Called at most once per
+	 * handle; a throw is swallowed so cleanup can never block settlement.
+	 */
+	dispose?: () => void;
 }
 
 /**
@@ -168,11 +174,16 @@ interface ActiveNode {
 	agentId: string;
 	sessionId?: string;
 	unsubscribe: () => void;
+	/** Factory cleanup (e.g. drop the node's messaging registration); called once on teardown. */
+	dispose?: () => void;
 	/** Messages of the most recent agent_end, used as the node's results. */
 	lastMessages?: AgentMessage[];
 	paused: boolean;
 	/** True between a prompt() call and its settlement. */
 	runActive: boolean;
+	/** True once an advisor node's task has settled: its later runs (answering
+	 * peers) only mirror events and never re-trigger gate/marker/settle logic. */
+	settledAdvisor?: boolean;
 }
 
 /**
@@ -203,6 +214,9 @@ export class TeamOrchestrator {
 	/** True while a validation pass is in flight; blocks settlement. */
 	private validating = false;
 	private readonly active = new Map<string, ActiveNode>();
+	/** Advisor nodes whose task has settled but whose agent stays live as a
+	 * messaging target until the run ends (see TaskNode.advisor). */
+	private readonly advisors = new Map<string, ActiveNode>();
 	/** Task ids whose current gate is an end-of-task completion gate (vs a marker gate). */
 	private readonly completionGates = new Set<string>();
 	/** Resumed tasks waiting for a free slot, answer text included. */
@@ -476,6 +490,10 @@ export class TeamOrchestrator {
 	private async dispatchNode(node: TaskNode, text: string): Promise<void> {
 		// Callers (dispatchReady and resumeNode) mark the node running before this
 		// runs, so a re-entrant fill() can't dispatch it again across the awaits.
+		// If this node is a live advisor being re-dispatched (e.g. the validator
+		// bounced it), tear the prior live instance down first so it can't orphan
+		// its subscription/registration.
+		this.disposeAdvisor(node.id);
 		try {
 			const handle = await this.createHarness(node);
 			const active: ActiveNode = {
@@ -484,6 +502,7 @@ export class TeamOrchestrator {
 				agentId: handle.agentId ?? randomUUID(),
 				sessionId: handle.sessionId,
 				unsubscribe: () => {},
+				dispose: handle.dispose,
 				paused: false,
 				runActive: false,
 			};
@@ -522,6 +541,10 @@ export class TeamOrchestrator {
 		if (MIRRORED_EVENT_TYPES.has(event.type)) {
 			this.publish({ ...event, role: active.node.role, agentId: active.agentId, ts: Date.now() });
 		}
+		// A settled advisor answering a peer: keep mirroring its events (so
+		// ask_agent sees the agent_end) but never re-open a gate or re-settle a
+		// node that is already done.
+		if (active.settledAdvisor) return;
 		if (event.type === "agent_end") {
 			active.lastMessages = event.messages;
 			return;
@@ -687,20 +710,46 @@ export class TeamOrchestrator {
 		// HITL: a clean run end opens a completion gate instead of settling done.
 		// The human approves (settle) or revises (re-prompt). Failed runs settle as
 		// error directly — there is nothing to approve.
-		if (!failed && !this.allowAutonomous) {
+		if (!failed && this.shouldGate(active.node)) {
 			this.pauseForCompletion(active);
 			return;
 		}
 		this.settleNode(active.node.id, failed, { messages: active.lastMessages });
 	}
 
+	/**
+	 * Whether a clean run end opens a completion gate: the node's own `gate`
+	 * policy wins, falling back to the run-wide default (HITL gates every node
+	 * unless allowAutonomous). This is what lets a run gate only at chosen nodes
+	 * — e.g. autonomous everywhere, with gate:true on the merge node alone.
+	 */
+	private shouldGate(node: TaskNode): boolean {
+		return node.gate ?? !this.allowAutonomous;
+	}
+
 	private settleNode(taskId: string, failed: boolean, opts: { messages?: AgentMessage[]; error?: unknown; holdsSlot?: boolean }): void {
+		const node = this.dag.get(taskId);
+		// An advisor settling "done" keeps its agent live and adopted (a messaging
+		// target) until the run ends, instead of being torn down now. A failed
+		// advisor tears down normally — a broken advisor is no advisor.
+		const keepAlive = !failed && Boolean(node?.advisor);
 		const active = this.active.get(taskId);
 		if (active) {
-			active.unsubscribe();
 			this.active.delete(taskId);
+			if (keepAlive) {
+				active.settledAdvisor = true;
+				this.advisors.set(taskId, active); // stays subscribed + adopted for peers
+			} else {
+				active.unsubscribe();
+				// Drop the node's messaging registration (or any other factory cleanup)
+				// the moment it's torn down — on retry a fresh harness re-registers.
+				try {
+					active.dispose?.();
+				} catch {
+					// Cleanup is best-effort; a throwing dispose must not block settlement.
+				}
+			}
 		}
-		const node = this.dag.get(taskId);
 		const errorText =
 			opts.error === undefined
 				? failed
@@ -818,8 +867,23 @@ export class TeamOrchestrator {
 		this.finish(failed);
 	}
 
+	/** Tear down one live advisor (subscription + messaging registration), if present. */
+	private disposeAdvisor(taskId: string): void {
+		const advisor = this.advisors.get(taskId);
+		if (!advisor) return;
+		this.advisors.delete(taskId);
+		advisor.unsubscribe();
+		try {
+			advisor.dispose?.();
+		} catch {
+			// Best-effort cleanup; a throwing dispose must not block teardown.
+		}
+	}
+
 	private finish(failed: boolean): void {
 		this.finished = true;
+		// Advisors stay live only for the duration of the run; release them all now.
+		for (const taskId of [...this.advisors.keys()]) this.disposeAdvisor(taskId);
 		// Memory records before run_end persists and the dag event publishes, so
 		// anything that observes the run as settled can already bootstrap a
 		// follow-up run from this run's outputs.
@@ -906,7 +970,34 @@ export class TeamOrchestrator {
 		}
 		// Send the named task back for rework; the dag is open again, so the
 		// run continues and the next completion triggers another validation pass.
-		this.retryNode(node, undefined, `goal validation: ${reason}`, false);
+		this.reworkWithDependents(node, `goal validation: ${reason}`);
+	}
+
+	/**
+	 * Send a node back for rework and reset its already-done dependents to idle,
+	 * so they re-run against the corrected output instead of keeping results
+	 * computed from the node's previous (rejected) work. The dag holds the
+	 * dependents blocked until the reworked node completes again, so ordering is
+	 * preserved. Dependents don't consume their own retry budget — the rerun is
+	 * not their failure.
+	 */
+	private reworkWithDependents(node: TaskNode, error: string): void {
+		for (const dependentId of this.dag.dependentsOf(node.id)) {
+			if (this.dag.get(dependentId)?.status !== "done") continue;
+			const dependent = this.dag.resetToIdle(dependentId);
+			const reason = `re-run: upstream "${node.id}" was reworked`;
+			this.persist("task_retry", { runId: this.runId, taskId: dependentId, attempt: dependent.attempts ?? 0, error: reason, ts: Date.now() });
+			this.publish({
+				type: "task_retried",
+				taskId: dependentId,
+				role: dependent.role,
+				agentId: this.runId,
+				attempt: dependent.attempts ?? 0,
+				error: reason,
+				ts: Date.now(),
+			});
+		}
+		this.retryNode(node, undefined, error, false);
 	}
 
 	/** Goal + every task's output, as the validator's prompt. */
