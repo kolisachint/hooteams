@@ -445,6 +445,49 @@ describe("per-role tools", () => {
 			await rm(sessionsRoot, { recursive: true, force: true });
 		}
 	});
+
+	test("an advisor node stays adopted as a messaging target until the run ends", async () => {
+		const { createNodeHarnessFactory } = await import("../src/node-harness.js");
+		const { TeamOrchestrator } = await import("../src/team-orchestrator.js");
+		const { InMemorySessionRepo } = await import("@kolisachint/hoocode-agent-core");
+		const sessionsRoot = await mkdtemp(join(tmpdir(), "advisor-run-"));
+		try {
+			const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel, streamFn: textStreamFn() });
+			const dag = new TaskDag();
+			dag.add({ id: "arch", role: "arch", advisor: true });
+			dag.add({ id: "impl", role: "impl", deps: ["arch"] });
+			const createHarness = createNodeHarnessFactory({
+				roles: [
+					{ role: "arch", systemPrompt: "arch", model: "fake-model" },
+					{ role: "impl", systemPrompt: "impl", model: "fake-model" },
+				],
+				runId: "advisor-run",
+				sessionsRoot,
+				team,
+				resolveModel: () => fakeModel,
+				streamFn: textStreamFn(),
+			});
+
+			const adoptedAtSettle: Record<string, boolean> = {};
+			const session = await new InMemorySessionRepo().create();
+			await new TeamOrchestrator(dag, {
+				session,
+				createHarness,
+				// Snapshot whether the advisor (arch) is still adopted as each node settles.
+				afterTaskSettle: (node) => {
+					adoptedAtSettle[node.id] = team.has("arch");
+				},
+			}).run();
+
+			// The advisor is still adopted at its own settle and while impl runs after it...
+			expect(adoptedAtSettle.arch).toBe(true);
+			expect(adoptedAtSettle.impl).toBe(true);
+			// ...and released once the run finishes.
+			expect(team.has("arch")).toBe(false);
+		} finally {
+			await rm(sessionsRoot, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("Team.trackStatus reports paused gates", () => {

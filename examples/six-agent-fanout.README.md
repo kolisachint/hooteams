@@ -63,10 +63,12 @@ with its disposition: **[Fixed]** (code changed), **[Mitigated]** (handled in th
    call threw `No agent for role`. Nodes are now registered via `Team.adopt` on
    dispatch and released via `NodeHandle.dispose` on settle.
 
-2. **Messaging only reaches *concurrently-live* peers.** **[By design]** A settled node
-   is released and is no longer addressable — workers can't ask the finished `lead`,
-   and the `integrator` can't ask the finished workers. Cross-phase coordination uses
-   the memory board instead. (Registration deliberately skips `channel.attach`, since
+2. **Messaging only reaches *concurrently-live* peers.** **[Fixed — opt-in]** By default a
+   settled node is released and unaddressable, so cross-phase coordination uses the memory
+   board. A node marked `advisor: true` instead keeps its agent live and adopted until the
+   run ends, so later-phase nodes can `ask_agent` it across phases (e.g. a schema owner
+   answering implementers mid-build — see `negotiation-team.json`). Released at run finish;
+   restored runs don't rehydrate live advisors. (Registration skips `channel.attach`, since
    the orchestrator already mirrors node events — attaching would double-publish.)
 
 3. **`ask_agent` resolves on the target's *next* `agent_end`.** **[Open]** If the

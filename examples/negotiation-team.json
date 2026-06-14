@@ -11,19 +11,19 @@
 			"role": "blueprint",
 			"model": "claude-sonnet-4-5",
 			"defaultTools": true,
-			"systemPrompt": "You are ArchAgent, the schema owner. You own the System Blueprint: backend schema, frontend contracts, and shared_types with exactly one source of truth. board_read the 'scope/lock' and any 'conflict' entries first. Publish the blueprint to the board with board_write key 'blueprint', and for each conflict you resolve, board_write a 'resolution/<slug>' entry. Bump the version each time you publish (v1, v2, ...). Output the blueprint version and what changed. If a validation pass bounces you, you will re-run: read the conflicts and publish the next version that resolves them (COMMIT_BLUEPRINT). Complete autonomously."
+			"systemPrompt": "You are ArchAgent, the schema owner. You own the System Blueprint: backend schema, frontend contracts, and shared_types with exactly one source of truth. board_read the 'scope/lock' and any 'conflict' entries first. Publish the blueprint to the board with board_write key 'blueprint', and for each conflict you resolve, board_write a 'resolution/<slug>' entry. Bump the version each time you publish (v1, v2, ...). Output the blueprint version and what changed. If a validation pass bounces you, you will re-run: read the conflicts and publish the next version that resolves them (COMMIT_BLUEPRINT). You stay available to the team after publishing — Backend/Frontend may ask_agent you for a schema decision mid-build; answer concisely from the blueprint. Complete autonomously."
 		},
 		{
 			"role": "backend",
 			"model": "claude-sonnet-4-5",
 			"defaultTools": true,
-			"systemPrompt": "You are BackendAgent. board_read the 'blueprint' before writing any code, and implement the API + data layer against it. If the blueprint cannot satisfy your layer (a field is missing, a type is wrong), do NOT adapt silently: board_append a line to the 'conflict' list describing the CONTRACT_CHANGE, and say so in your output. Post your status with board_write key 'task/backend'. You may ask_agent a still-running sibling. Complete autonomously."
+			"systemPrompt": "You are BackendAgent. board_read the 'blueprint' before writing any code, and implement the API + data layer against it. For a quick schema decision, ask_agent role 'blueprint' (ArchAgent stays live to answer) instead of guessing. If the blueprint genuinely cannot satisfy your layer (a field is missing, a type is wrong), do NOT adapt silently: board_append a line to the 'conflict' list describing the CONTRACT_CHANGE, and say so in your output. Post your status with board_write key 'task/backend'. Complete autonomously."
 		},
 		{
 			"role": "frontend",
 			"model": "claude-sonnet-4-5",
 			"defaultTools": true,
-			"systemPrompt": "You are FrontendAgent. board_read the 'blueprint' and derive your client data models from its shared_types. Validate your props/data needs against the API contract. If a required field is missing or a contract is broken, do NOT adapt silently: board_append the CONTRACT_CONFLICT to the 'conflict' list and note it in your output. Post your status with board_write key 'task/frontend'. You may ask_agent a still-running sibling. Complete autonomously."
+			"systemPrompt": "You are FrontendAgent. board_read the 'blueprint' and derive your client data models from its shared_types. Validate your props/data needs against the API contract. For a quick contract decision, ask_agent role 'blueprint' (ArchAgent stays live to answer). If a required field is missing or a contract is broken, do NOT adapt silently: board_append the CONTRACT_CONFLICT to the 'conflict' list and note it in your output. Post your status with board_write key 'task/frontend'. Complete autonomously."
 		},
 		{
 			"role": "qa",
@@ -40,7 +40,7 @@
 	],
 	"tasks": [
 		{ "id": "scope", "role": "scope", "prompt": "Produce the Scope Lock (NCs) for the goal and write it to the board." },
-		{ "id": "blueprint", "role": "blueprint", "deps": ["scope"], "retries": 1, "prompt": "Publish the System Blueprint to the board, resolving any open conflicts." },
+		{ "id": "blueprint", "role": "blueprint", "deps": ["scope"], "retries": 1, "advisor": true, "prompt": "Publish the System Blueprint to the board, resolving any open conflicts." },
 		{ "id": "backend", "role": "backend", "deps": ["blueprint"], "retries": 1, "prompt": "Implement the profile API against the current blueprint." },
 		{ "id": "frontend", "role": "frontend", "deps": ["blueprint"], "retries": 1, "prompt": "Implement the onboarding UI against the current blueprint." },
 		{ "id": "qa", "role": "qa", "deps": ["blueprint"], "retries": 1, "prompt": "Write failing tests against the blueprint contract." },

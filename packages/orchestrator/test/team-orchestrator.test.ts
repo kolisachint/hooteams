@@ -285,6 +285,35 @@ describe("TeamOrchestrator", () => {
 		expect(events.at(-1)?.type).toBe("dag_complete");
 	});
 
+	test("an advisor node stays live (teardown deferred) until the run finishes", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "arch", role: "arch", advisor: true });
+		dag.add({ id: "impl", role: "impl", deps: ["arch"] });
+		const disposed: string[] = [];
+		let disposedWhenArchSettled: string[] = [];
+		const channel = new TeamChannel();
+		channel.subscribe((event) => {
+			if (event.type === "task_finished" && event.taskId === "arch") disposedWhenArchSettled = [...disposed];
+		});
+
+		const createHarness = (node: TaskNode) => {
+			const fake = new FakeHarness(sayAndFinish);
+			return { harness: fake as unknown as FakeHarness, sessionId: `s-${node.id}`, dispose: () => disposed.push(node.id) };
+		};
+
+		await new TeamOrchestrator(dag, { session, channel, createHarness }).run();
+
+		expect(dag.get("arch")?.status).toBe("done");
+		// The advisor was NOT torn down when its own task settled...
+		expect(disposedWhenArchSettled).not.toContain("arch");
+		// ...the non-advisor impl tore down normally at its settle...
+		expect(disposed).toContain("impl");
+		// ...and the advisor was released only at run finish (after impl).
+		expect(disposed).toContain("arch");
+		expect(disposed.indexOf("arch")).toBeGreaterThan(disposed.indexOf("impl"));
+	});
+
 	test("gate:false suppresses the completion gate in an otherwise HITL run", async () => {
 		const session = await new InMemorySessionRepo().create();
 		const dag = new TaskDag();

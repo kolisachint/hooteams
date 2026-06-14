@@ -1,9 +1,13 @@
 # Negotiation-first team on hooteams (no engine changes)
 
-This shows that hooteams **already supports** a negotiation-first six-agent team —
-where the task graph behaves like a living contract that adapts when agents detect
-cross-layer conflicts — using only existing primitives. Nothing was added to the engine
-to make this work.
+This shows hooteams running a negotiation-first six-agent team — where the task graph
+behaves like a living contract that adapts when agents detect cross-layer conflicts.
+
+The **batch loop** (board-versioned Blueprint + validator + cascade rework) needs **no
+engine changes** at all. The **synchronous, mid-pass** half — an implementer asking a
+*live* ArchAgent for a decision while building — uses one small engine addition, the
+`advisor` flag (`TaskNode.advisor`), which keeps a node's agent live and addressable
+after its task settles. Both modes are shown below.
 
 - `negotiation-team.json` — a runnable `{goal, roles, tasks}` plan (`hooteams run`).
 - `negotiation-team.verify.ts` — a credential-free proof you can run yourself:
@@ -28,7 +32,7 @@ as deadlock/live-mutation hazards. hooteams gets the **same behavior** a safe wa
 | Spec agent | Realized as | Primitive |
 |---|---|---|
 | **SpecAgent** | `scope` node (root) | board: Scope Lock / NCs |
-| **ArchAgent** | `blueprint` node | board: owns the `blueprint` key, versioned |
+| **ArchAgent** | `blueprint` node, `advisor: true` (stays live) | board: owns the `blueprint` key, versioned; answers `ask_agent` mid-build |
 | **BridgeAgent** | the **run validator** | verdict bounces `blueprint`; cascade re-runs branches |
 | **BackendAgent** | `backend` node (deps: blueprint) | defaultTools + board + `ask_agent` |
 | **FrontendAgent** | `frontend` node (deps: blueprint) | same |
@@ -78,12 +82,20 @@ How a conflict travels (one pass):
 
 Then: `hooteams run examples/negotiation-team.json`.
 
-## What this does NOT give you (would need engine work)
+## Two negotiation modes — both supported
 
-- **Synchronous mid-pass negotiation.** Here agents negotiate *between* passes (raise on
-  the board, resolve on re-run). Letting BackendAgent block on a live ArchAgent *during*
-  a pass needs the "advisor roles" change (an agent that stays live after its task
-  settles). The batch loop above needs none of that.
+- **Synchronous, mid-pass (live ArchAgent).** `blueprint` is marked `"advisor": true`, so
+  ArchAgent stays live and addressable after it publishes. Backend/Frontend `ask_agent`
+  role `blueprint` for a schema decision *during* their pass and get an answer
+  immediately — the real-time negotiation thread. (Advisor lifecycle: the agent is
+  resident until the run ends; a restored run does not rehydrate live advisors.)
+- **Batch, between passes (validator + cascade).** Genuine breaking conflicts still go on
+  the board; BridgeAgent (validator) bounces `blueprint` and the cascade re-runs the
+  branches against the revised version. This is the fallback when a conflict can't be
+  settled by a quick question.
+
+## What this still does NOT give you (out of scope)
+
 - **Instant branch freeze.** A branch finishes its current pass before being reset — same
   convergence, coarser timing than a true `PAUSE_BRANCH`.
 - **`REASSIGN_OWNER`** load-balancing.

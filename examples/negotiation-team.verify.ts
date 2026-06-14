@@ -186,7 +186,7 @@ async function main(): Promise<void> {
 		console.error("\nVERIFICATION FAILED");
 		process.exit(1);
 	}
-	console.log("\nVERIFIED: hooteams supports the negotiation-first pattern with no engine changes.");
+	console.log("\nVERIFIED: the negotiation batch loop (conflict → bounce → cascade → resolve → gate) runs on the real engine with no engine changes. (The synchronous, mid-pass advisor mode is covered by the orchestrator tests.)");
 }
 
 void main();

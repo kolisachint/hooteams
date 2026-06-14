@@ -8,6 +8,8 @@ export interface TaskNodeInput {
 	retries?: number;
 	/** Per-node approval policy overriding the run default (see TaskNode.gate). */
 	gate?: boolean;
+	/** Keep the node's agent live as a messaging target after it settles (see TaskNode.advisor). */
+	advisor?: boolean;
 }
 
 /**
@@ -25,6 +27,7 @@ export class TaskDag {
 		const node: TaskNode = { id: input.id, role: input.role, deps: input.deps?.slice() ?? [], status: "idle" };
 		if (input.retries !== undefined) node.retries = input.retries;
 		if (input.gate !== undefined) node.gate = input.gate;
+		if (input.advisor !== undefined) node.advisor = input.advisor;
 		this.nodes.set(input.id, node);
 		return this.snapshot(node);
 	}
