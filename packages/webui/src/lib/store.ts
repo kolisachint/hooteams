@@ -280,7 +280,7 @@ export const useStore = create<Store>((set) => ({
 	pending: {},
 	connection: "connecting",
 	setConnection: (status) => set({ connection: status }),
-	loadRun: (runInfo) => set({ runInfo, events: [], pending: {} }),
+	loadRun: (runInfo) => set({ runInfo, events: [], pending: runInfo.pending ?? {} }),
 	dispatch: (event) =>
 		set((state) => {
 			const runInfo = reduceRun(state.runInfo, event);

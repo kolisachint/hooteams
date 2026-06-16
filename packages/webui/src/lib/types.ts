@@ -191,4 +191,6 @@ export interface RunInfo {
 	status: "running" | "done" | "error";
 	startedAt?: number;
 	endedAt?: number;
+	/** Gates still open at the end of the session (replay mode). */
+	pending?: Record<string, PendingApproval>;
 }

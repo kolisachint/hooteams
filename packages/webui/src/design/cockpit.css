@@ -217,7 +217,7 @@ button {
 	border-radius: 999px;
 	background: var(--ok);
 	box-shadow: 0 0 0 0 var(--ok);
-	animation: ping 2.4s var(--ease-out) infinite;
+	animation: ping 3.2s var(--ease-out) infinite;
 }
 .conn[data-conn="reconnecting"] .dot {
 	background: var(--warn);
@@ -257,11 +257,11 @@ button {
 }
 .runpill[data-s="running"] .dot,
 .runpill[data-s="gated"] .dot {
-	animation: pulse 1.2s ease-in-out infinite;
+	animation: pulse 2.2s ease-in-out infinite;
 }
 @keyframes pulse {
 	50% {
-		opacity: 0.3;
+		opacity: 0.45;
 	}
 }
 
@@ -472,7 +472,7 @@ button {
 }
 .node[data-s="running"] {
 	box-shadow: 0 0 0 1px var(--sc), var(--shadow-1);
-	animation: nodeglow 1.6s ease-in-out infinite;
+	animation: nodeglow 2.6s ease-in-out infinite;
 }
 .node[data-s="gate"] {
 	box-shadow: 0 0 0 1px var(--sc), 0 0 0 5px color-mix(in oklab, var(--accent) 14%, transparent);
@@ -562,7 +562,7 @@ button {
 }
 .node[data-s="running"] .node-stat .dot,
 .node[data-s="gate"] .node-stat .dot {
-	animation: pulse 1.1s ease-in-out infinite;
+	animation: pulse 2.2s ease-in-out infinite;
 }
 
 /* edges */
@@ -680,7 +680,7 @@ button {
 	white-space: nowrap;
 }
 .tl-bar[data-s="running"] {
-	animation: barpulse 1.6s ease-in-out infinite;
+	animation: barpulse 2.6s ease-in-out infinite;
 }
 @keyframes barpulse {
 	50% {
@@ -1221,7 +1221,7 @@ button {
 .insp-agent[data-s="streaming"] .ia-stat .dot,
 .insp-agent[data-s="tool"] .ia-stat .dot,
 .insp-agent[data-s="thinking"] .ia-stat .dot {
-	animation: pulse 1.1s ease-in-out infinite;
+	animation: pulse 2.2s ease-in-out infinite;
 }
 
 /* progress ring */
