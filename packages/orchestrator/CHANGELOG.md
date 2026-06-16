@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- Role system prompts are now assembled in the same layered shape the hoocode CLI uses, instead of passing the raw `systemPrompt` through. Each node's prompt gains a tool-aware section (only the tools that node actually has, with one-line descriptions), tool-aware guidelines, auto-loaded project context (`AGENTS.md` / `CLAUDE.md` / `.hoocode/context.md` from the role's `cwd`), an `<available_skills>` block (skills loaded from the global, project, and `skills/` directories), and a date/cwd stamp — with hooteams' HITL protocol still appended last. New exports: `buildRoleSystemPrompt`, `loadContextFiles`, `CONTEXT_FILENAMES`, `loadRoleSkills`, `defaultSkillDirs`, and the `ContextFile`/`BuildRoleSystemPromptOptions` types.
+- `RoleConfig` gains optional `appendSystemPrompt` (appendix after the guidelines), `promptGuidelines` (extra guideline bullets), and `skillPaths` (extra skill directories beyond the defaults).
+
 ## [0.1.24] - 2026-06-16
 
 ## [0.1.23] - 2026-06-16

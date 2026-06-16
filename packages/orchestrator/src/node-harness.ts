@@ -10,8 +10,11 @@ import {
 } from "@kolisachint/hoocode-agent-core";
 import { getModel, type Model } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
+import { loadContextFiles } from "./context-loader.js";
 import { createBoardTools, createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import { createAskAgentTool, createDelegateTaskTool } from "./planner.js";
+import { loadRoleSkills } from "./skills-loader.js";
+import { buildRoleSystemPrompt } from "./system-prompt.js";
 import type { Team } from "./team.js";
 import { extractMessageText, type NodeHandle } from "./team-orchestrator.js";
 import type { AgentEvent, AgentMessage, RoleConfig, TaskNode } from "./types.js";
@@ -147,6 +150,7 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 			throw new Error(`Unknown model "${config.model}" for provider "${config.provider ?? "anthropic"}"`);
 		}
 		const cwd = config.cwd ?? process.cwd();
+		const env = new NodeExecutionEnv({ cwd });
 		const session = await openOrCreateSession(repo, nodeSessionId(options.runId, node.id), cwd);
 		const tools = [...(config.defaultTools ? getDefaultTools({ cwd: config.cwd }) : []), ...(config.tools ?? [])];
 		if (config.mcpConfigPath) {
@@ -165,13 +169,29 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 			tools.push(createMemoryWriteTool(options.memory, { runId: options.runId, role: node.role }));
 			tools.push(...createBoardTools(options.memory, { runId: options.runId, role: node.role }));
 		}
+		// Enrich the role's prompt the way the hoocode CLI does: list the tools this
+		// node actually has, fold in project context and skills from its cwd, and
+		// stamp the date/cwd — then append hooteams' HITL protocol marker.
+		const [contextFiles, skills] = await Promise.all([
+			loadContextFiles(env, cwd),
+			loadRoleSkills(env, cwd, config.skillPaths),
+		]);
+		const systemPrompt = `${buildRoleSystemPrompt({
+			basePrompt: config.systemPrompt,
+			appendSystemPrompt: config.appendSystemPrompt,
+			promptGuidelines: config.promptGuidelines,
+			tools,
+			contextFiles,
+			skills,
+			cwd,
+		})}\n\n${HITL_SYSTEM_PROMPT}`;
 		const harness = new AgentHarness({
-			env: new NodeExecutionEnv({ cwd }),
+			env,
 			session,
 			model,
 			thinkingLevel: config.thinkingLevel,
 			tools,
-			systemPrompt: `${config.systemPrompt}\n\n${HITL_SYSTEM_PROMPT}`,
+			systemPrompt,
 			getApiKeyAndHeaders,
 		});
 		if (options.streamFn) {

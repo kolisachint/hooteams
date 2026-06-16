@@ -122,6 +122,12 @@ export type TeamEvent =
 export interface RoleConfig {
 	role: string;
 	systemPrompt: string;
+	/** Appendix injected after the base prompt and guidelines (e.g. "focus on security"). */
+	appendSystemPrompt?: string;
+	/** Extra guideline bullet points added to the standard, tool-aware guidelines. */
+	promptGuidelines?: string[];
+	/** Extra skill directories searched in addition to the defaults (global + project skills). */
+	skillPaths?: string[];
 	/** Model id, resolved via @kolisachint/hoocode-ai getModel(). */
 	model: string;
 	/** Model provider for getModel(). Defaults to "anthropic". */
