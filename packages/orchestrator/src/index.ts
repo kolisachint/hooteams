@@ -9,11 +9,11 @@ export type { ApprovalRequest } from "./ask-options.js";
 export { createHoocodeAuth, defaultAuthPath } from "./auth.js";
 export type { AuthCredential, AuthFileData, GetApiKey, HoocodeAuthOptions } from "./auth.js";
 export { REPLAY_BUFFER_SIZE, TeamChannel } from "./channel.js";
-export { CONTEXT_FILENAMES, loadContextFiles } from "./context-loader.js";
-export type { ContextFile } from "./context-loader.js";
-export { defaultSkillDirs, loadRoleSkills } from "./skills-loader.js";
-export { buildRoleSystemPrompt } from "./system-prompt.js";
-export type { BuildRoleSystemPromptOptions } from "./system-prompt.js";
+// hoocode's published prompt loaders, re-exported so hosts can reuse them without
+// depending on @kolisachint/hoocode-agent directly.
+export { getAgentDir, loadProjectContextFiles, loadSkills } from "@kolisachint/hoocode-agent";
+export { buildRoleSystemPrompt, buildSystemPromptAvailable } from "./role-prompt.js";
+export type { HoocodePromptApi, RolePromptInputs } from "./role-prompt.js";
 export type { Subscribable, TeamEventListener } from "./channel.js";
 export { TaskDag } from "@kolisachint/hooteams-dag";
 export type { TaskNodeInput } from "@kolisachint/hooteams-dag";

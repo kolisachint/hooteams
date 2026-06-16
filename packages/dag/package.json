@@ -9,7 +9,7 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@kolisachint/hoocode-agent-core": "^0.4.49"
+		"@kolisachint/hoocode-agent-core": "^0.4.66"
 	},
 	"author": "Sachin Koli",
 	"license": "MIT"

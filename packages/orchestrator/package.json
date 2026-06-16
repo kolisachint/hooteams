@@ -10,8 +10,9 @@
 	},
 	"dependencies": {
 		"@kolisachint/hooteams-dag": "workspace:*",
-		"@kolisachint/hoocode-agent-core": "^0.4.49",
-		"@kolisachint/hoocode-ai": "^0.4.44",
+		"@kolisachint/hoocode-agent": "^0.4.66",
+		"@kolisachint/hoocode-agent-core": "^0.4.66",
+		"@kolisachint/hoocode-ai": "^0.4.66",
 		"proper-lockfile": "^4.1.2"
 	},
 	"author": "Sachin Koli",

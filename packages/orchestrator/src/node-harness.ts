@@ -10,11 +10,9 @@ import {
 } from "@kolisachint/hoocode-agent-core";
 import { getModel, type Model } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
-import { loadContextFiles } from "./context-loader.js";
 import { createBoardTools, createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import { createAskAgentTool, createDelegateTaskTool } from "./planner.js";
-import { loadRoleSkills } from "./skills-loader.js";
-import { buildRoleSystemPrompt } from "./system-prompt.js";
+import { buildRoleSystemPrompt } from "./role-prompt.js";
 import type { Team } from "./team.js";
 import { extractMessageText, type NodeHandle } from "./team-orchestrator.js";
 import type { AgentEvent, AgentMessage, RoleConfig, TaskNode } from "./types.js";
@@ -169,20 +167,16 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 			tools.push(createMemoryWriteTool(options.memory, { runId: options.runId, role: node.role }));
 			tools.push(...createBoardTools(options.memory, { runId: options.runId, role: node.role }));
 		}
-		// Enrich the role's prompt the way the hoocode CLI does: list the tools this
-		// node actually has, fold in project context and skills from its cwd, and
-		// stamp the date/cwd — then append hooteams' HITL protocol marker.
-		const [contextFiles, skills] = await Promise.all([
-			loadContextFiles(env, cwd),
-			loadRoleSkills(env, cwd, config.skillPaths),
-		]);
+		// Enrich the role's prompt with hoocode's own machinery: ride the role
+		// identity on hoocode's coding base (so it gets the tools list + guidelines)
+		// and fold in project context + skills loaded from its cwd, then append
+		// hooteams' HITL protocol marker.
 		const systemPrompt = `${buildRoleSystemPrompt({
 			basePrompt: config.systemPrompt,
 			appendSystemPrompt: config.appendSystemPrompt,
 			promptGuidelines: config.promptGuidelines,
+			skillPaths: config.skillPaths,
 			tools,
-			contextFiles,
-			skills,
 			cwd,
 		})}\n\n${HITL_SYSTEM_PROMPT}`;
 		const harness = new AgentHarness({
