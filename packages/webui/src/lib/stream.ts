@@ -69,7 +69,28 @@ export function disconnect(): void {
 	source = undefined;
 }
 
-/** The only write operation in the web UI: nudge an agent mid-run. */
+/**
+ * Resolve a human-in-the-loop approval gate. `option` is one of the choices the
+ * orchestrator offered in the task_paused event; `feedback` is an optional note.
+ */
+export async function resumeTask(
+	taskId: string,
+	option: string,
+	feedback?: string,
+	host: string = HOOTEAMS_HOST,
+): Promise<void> {
+	const response = await fetch(`${host}/tasks/${encodeURIComponent(taskId)}/resume`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ option, ...(feedback ? { feedback } : {}) }),
+	});
+	if (!response.ok) {
+		const body = (await response.json().catch(() => ({}))) as { error?: string };
+		throw new Error(body.error ?? `resume failed: HTTP ${response.status}`);
+	}
+}
+
+/** The only steering operation in the web UI: nudge an agent mid-run. */
 export async function steer(role: string, message: string, host: string = HOOTEAMS_HOST): Promise<void> {
 	const response = await fetch(`${host}/steer`, {
 		method: "POST",

@@ -127,6 +127,25 @@ export interface AgentState {
 
 export type ConnectionStatus = "connecting" | "live" | "reconnecting";
 
+/** A single line in the live activity feed, derived from wire events. */
+export type FeedKind = "start" | "tool" | "done" | "gate" | "approve" | "reject" | "retry" | "error";
+
+export interface FeedEvent {
+	id: string;
+	ts: number;
+	role: string;
+	kind: FeedKind;
+	taskId?: string;
+	text: string;
+}
+
+/** A task awaiting a human decision (from task_paused). */
+export interface PendingApproval {
+	taskId: string;
+	question?: string;
+	options?: string[];
+}
+
 // ── DAG / Session Replay Types ──
 
 export type TaskStatus = "idle" | "pending" | "running" | "done" | "error" | "retrying";

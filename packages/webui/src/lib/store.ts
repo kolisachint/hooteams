@@ -1,13 +1,85 @@
 import { create } from "zustand";
-import type { AgentState, ConnectionStatus, DagNode, DagState, RunInfo, TaskStatus, TeamEvent, ToolChipState } from "./types";
+import { humanize } from "./roles";
+import type {
+	AgentState,
+	ConnectionStatus,
+	DagNode,
+	DagState,
+	FeedEvent,
+	PendingApproval,
+	RunInfo,
+	TaskStatus,
+	TeamEvent,
+	ToolChipState,
+} from "./types";
 
 interface Store {
 	agents: Map<string, AgentState>;
 	/** Live task graph for the active run, built from dag_snapshot + task_* events. */
 	runInfo: RunInfo | null;
+	/** Ordered activity feed, derived from the same wire events. */
+	events: FeedEvent[];
+	/** Tasks paused for a human decision, keyed by taskId. */
+	pending: Record<string, PendingApproval>;
 	connection: ConnectionStatus;
 	setConnection: (status: ConnectionStatus) => void;
 	dispatch: (event: TeamEvent) => void;
+	/** Replace the run from a parsed session (replay mode). */
+	loadRun: (runInfo: RunInfo) => void;
+}
+
+const MAX_FEED = 400;
+let feedSeq = 0;
+
+/** Translate a wire event into a feed line, or null when it isn't feed-worthy. */
+function feedFor(event: TeamEvent): FeedEvent | null {
+	const base = { id: `f${feedSeq++}`, ts: event.ts, role: event.role };
+	switch (event.type) {
+		case "task_started":
+			return { ...base, kind: "start", taskId: event.taskId, text: `started ${humanize(event.taskId)}` };
+		case "task_finished":
+			return event.status === "error"
+				? { ...base, kind: "error", taskId: event.taskId, text: `${humanize(event.taskId)} failed` }
+				: { ...base, kind: "done", taskId: event.taskId, text: `finished ${humanize(event.taskId)}` };
+		case "task_retried":
+			return {
+				...base,
+				kind: "retry",
+				taskId: event.taskId,
+				text: `retry ${humanize(event.taskId)} (attempt ${event.attempt})`,
+			};
+		case "task_paused":
+			return { ...base, kind: "gate", taskId: event.taskId, text: `${humanize(event.taskId)} → awaiting approval` };
+		case "task_resumed":
+			return { ...base, kind: "approve", taskId: event.taskId, text: `${humanize(event.taskId)} resumed` };
+		case "dag_failed":
+			return { ...base, kind: "error", text: "run failed" };
+		case "tool_execution_start":
+			return { ...base, kind: "tool", text: event.toolName };
+		default:
+			return null;
+	}
+}
+
+/** Fold pending-approval state forward. */
+function reducePending(pending: Record<string, PendingApproval>, event: TeamEvent): Record<string, PendingApproval> {
+	switch (event.type) {
+		case "task_paused": {
+			return {
+				...pending,
+				[event.taskId]: { taskId: event.taskId, question: event.question, options: event.options },
+			};
+		}
+		case "task_resumed":
+		case "task_finished": {
+			if (!pending[event.taskId]) return pending;
+			const next = { ...pending };
+			delete next[event.taskId];
+			return next;
+		}
+		default:
+			return pending;
+	}
 }
 
 /** Map an orchestrator/agent status string onto the viewer's TaskStatus. */
@@ -204,17 +276,23 @@ function reduce(agent: AgentState, event: TeamEvent): AgentState {
 export const useStore = create<Store>((set) => ({
 	agents: new Map(),
 	runInfo: null,
+	events: [],
+	pending: {},
 	connection: "connecting",
 	setConnection: (status) => set({ connection: status }),
+	loadRun: (runInfo) => set({ runInfo, events: [], pending: {} }),
 	dispatch: (event) =>
 		set((state) => {
 			const runInfo = reduceRun(state.runInfo, event);
+			const pending = reducePending(state.pending, event);
+			const line = feedFor(event);
+			const events = line ? [...state.events, line].slice(-MAX_FEED) : state.events;
 			// Run/dag-level events (role "orchestrator") drive the task graph only —
 			// they must not spawn an agent card.
-			if (event.role === "orchestrator") return { runInfo };
+			if (event.role === "orchestrator") return { runInfo, pending, events };
 			const agents = new Map(state.agents);
 			const current = agents.get(event.role) ?? emptyAgent(event.role, event.agentId);
 			agents.set(event.role, reduce(current, event));
-			return { agents, runInfo };
+			return { agents, runInfo, pending, events };
 		}),
 }));

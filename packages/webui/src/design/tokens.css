@@ -1,0 +1,189 @@
+/* =============================================================
+   Kolisachint Minimal — Tokens
+   Monochrome paper/ink with one warm rust accent.
+   Type-stack is fully monospaced (JetBrains Mono).
+   Ported from the hooteams design handoff. Fonts ship via
+   @fontsource-variable/jetbrains-mono (imported in index.css);
+   the terminal stack falls back through ui-monospace.
+   ============================================================= */
+
+:root {
+	/* === Color: paper & ink ===================================== */
+	--paper: #fafaf7; /* bone — primary surface */
+	--paper-2: #f2f2ec; /* chalk — recessed surface, hover */
+	--paper-3: #ecece6; /* lower than paper-2, code blocks */
+	--ink: #111110; /* primary text, foreground */
+	--ink-2: #36362f; /* secondary text */
+	--ink-3: #6b6b66; /* muted text, captions, hints */
+	--ink-4: #9a9a93; /* placeholder, disabled */
+	--line: #deded7; /* hairline borders, dividers */
+	--line-2: #c9c9c1; /* stronger border, focus ring base */
+
+	/* === Accent: a single warm rust ============================ */
+	--accent: #c2603a; /* rust — primary CTA, links */
+	--accent-2: #a24f2d; /* hover, pressed accent */
+	--accent-soft: #f2dcd0; /* tinted background for accent UI */
+	--accent-ink: #fafaf7; /* text on accent fills */
+
+	/* === Semantic ============================================== */
+	--ok: #3f7e5f; /* success, additions, online */
+	--ok-soft: #ddebe2;
+	--warn: #b58329; /* caution, deprecation */
+	--warn-soft: #efe4ce;
+	--err: #b5485a; /* destructive, errors, deletions */
+	--err-soft: #efd5da;
+	--info: #3d6e96; /* informational, links in prose */
+	--info-soft: #d6e2eb;
+
+	/* === Elevation: minimal, nearly flat ======================= */
+	--shadow-0: 0 0 0 0 transparent;
+	--shadow-1: 0 1px 0 0 rgb(17 17 16 / 0.04), 0 1px 2px 0 rgb(17 17 16 / 0.04);
+	--shadow-2: 0 1px 0 0 rgb(17 17 16 / 0.04), 0 6px 16px -8px rgb(17 17 16 / 0.1);
+	--shadow-3: 0 1px 0 0 rgb(17 17 16 / 0.04), 0 12px 28px -12px rgb(17 17 16 / 0.18);
+	--inset-1: inset 0 0 0 1px var(--line);
+	--inset-line-b: inset 0 -1px 0 0 var(--line);
+
+	/* === Geometry: low radius, hairline edges ================== */
+	--radius-0: 0px;
+	--radius-1: 2px; /* default — chips, inputs */
+	--radius-2: 4px; /* buttons, cards */
+	--radius-3: 6px; /* dialogs, larger surfaces */
+	--radius-pill: 999px;
+
+	--hairline: 1px;
+	--stroke: 1.5px; /* iconography stroke weight */
+
+	/* === Spacing scale (4-step, modest ramp) =================== */
+	--s-1: 4px;
+	--s-2: 8px;
+	--s-3: 12px;
+	--s-4: 16px;
+	--s-5: 24px;
+	--s-6: 32px;
+	--s-7: 48px;
+	--s-8: 64px;
+	--s-9: 96px;
+	--s-10: 128px;
+
+	/* === Type families ========================================= */
+	--font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "Cascadia Code", "Source Code Pro",
+		SFMono-Regular, Menlo, Consolas, monospace;
+	--font-term: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, Menlo, monospace;
+	--font-system: ui-sans-serif, -apple-system, "Segoe UI", Inter, sans-serif;
+
+	/* === Type scale (mono = wider em; we run a touch smaller) === */
+	--fs-xs: 11px; /* badges, micro labels */
+	--fs-sm: 12px; /* secondary text, hints */
+	--fs-base: 13px; /* body — mono reads dense */
+	--fs-md: 14px; /* component text, buttons */
+	--fs-lg: 16px; /* prominent body */
+	--fs-xl: 20px; /* h3, section titles */
+	--fs-2xl: 26px; /* h2 */
+	--fs-3xl: 34px; /* h1 */
+	--fs-4xl: 48px; /* display */
+	--fs-5xl: 64px; /* hero */
+
+	--lh-tight: 1.15;
+	--lh-snug: 1.35;
+	--lh-normal: 1.55;
+	--lh-relax: 1.75;
+
+	--tracking-tight: -0.02em;
+	--tracking-norm: -0.005em;
+	--tracking-wide: 0.06em;
+	--tracking-caps: 0.12em;
+
+	--weight-regular: 400;
+	--weight-medium: 500;
+	--weight-semi: 600;
+	--weight-bold: 700;
+
+	/* === Motion: brief, linear-ish ============================== */
+	--ease-out: cubic-bezier(0.2, 0, 0, 1);
+	--ease-in: cubic-bezier(0.4, 0, 1, 1);
+	--ease-inout: cubic-bezier(0.4, 0, 0.2, 1);
+	--dur-1: 80ms; /* hover */
+	--dur-2: 140ms; /* defaults */
+	--dur-3: 240ms; /* layout, panels */
+
+	/* === Focus =================================================== */
+	--focus-ring: 0 0 0 2px var(--paper), 0 0 0 4px var(--ink);
+}
+
+/* === Dark mode ================================================ */
+.dark,
+[data-theme="dark"] {
+	--paper: #0e0e0c;
+	--paper-2: #1a1a17;
+	--paper-3: #22221f;
+	--ink: #ecece6;
+	--ink-2: #c9c9c1;
+	--ink-3: #8a8a82;
+	--ink-4: #5c5c56;
+	--line: #2a2a26;
+	--line-2: #3a3a34;
+
+	--accent: #d6926b;
+	--accent-2: #e5a582;
+	--accent-soft: #2a1f18;
+	--accent-ink: #0e0e0c;
+
+	--ok: #6fa98a;
+	--ok-soft: #1a2521;
+	--warn: #d6a84f;
+	--warn-soft: #2a2417;
+	--err: #d9788a;
+	--err-soft: #281a1e;
+	--info: #7aa4c2;
+	--info-soft: #18222a;
+
+	--shadow-1: 0 1px 0 0 rgb(0 0 0 / 0.4), 0 1px 2px 0 rgb(0 0 0 / 0.4);
+	--shadow-2: 0 1px 0 0 rgb(0 0 0 / 0.4), 0 6px 16px -8px rgb(0 0 0 / 0.6);
+	--shadow-3: 0 1px 0 0 rgb(0 0 0 / 0.4), 0 12px 28px -12px rgb(0 0 0 / 0.7);
+
+	--focus-ring: 0 0 0 2px var(--paper), 0 0 0 4px var(--ink);
+}
+
+/* =============================================================
+   Base + semantic typography
+   ============================================================= */
+html,
+body {
+	font-family: var(--font-mono);
+	font-size: var(--fs-base);
+	line-height: var(--lh-normal);
+	color: var(--ink);
+	background: var(--paper);
+	font-feature-settings: "liga" 0, "calt" 1; /* keep contextual, kill ligs */
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+.t-eyebrow {
+	font-size: var(--fs-xs);
+	text-transform: uppercase;
+	letter-spacing: var(--tracking-caps);
+	color: var(--ink-3);
+	font-weight: var(--weight-medium);
+}
+.t-caption {
+	font-size: var(--fs-sm);
+	color: var(--ink-3);
+	line-height: var(--lh-snug);
+}
+
+/* Selection */
+::selection {
+	background: var(--ink);
+	color: var(--paper);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		transition-duration: 0.01ms !important;
+	}
+}
