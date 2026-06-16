@@ -26,8 +26,8 @@
       "name": "@kolisachint/hooteams-server",
       "version": "0.1.24",
       "dependencies": {
-        "@kolisachint/hoocode-agent-core": "^0.4.66",
-        "@kolisachint/hoocode-ai": "^0.4.66",
+        "@kolisachint/hoocode-agent-core": "^0.4.67",
+        "@kolisachint/hoocode-ai": "^0.4.67",
         "@kolisachint/hooteams-bridge": "workspace:*",
         "@kolisachint/hooteams-orchestrator": "workspace:*",
         "@kolisachint/hooteams-webui": "workspace:*",
@@ -44,16 +44,16 @@
       "name": "@kolisachint/hooteams-dag",
       "version": "0.1.24",
       "dependencies": {
-        "@kolisachint/hoocode-agent-core": "^0.4.66",
+        "@kolisachint/hoocode-agent-core": "^0.4.67",
       },
     },
     "packages/orchestrator": {
       "name": "@kolisachint/hooteams-orchestrator",
       "version": "0.1.24",
       "dependencies": {
-        "@kolisachint/hoocode-agent": "^0.4.66",
-        "@kolisachint/hoocode-agent-core": "^0.4.66",
-        "@kolisachint/hoocode-ai": "^0.4.66",
+        "@kolisachint/hoocode-agent": "^0.4.67",
+        "@kolisachint/hoocode-agent-core": "^0.4.67",
+        "@kolisachint/hoocode-ai": "^0.4.67",
         "@kolisachint/hooteams-dag": "workspace:*",
         "proper-lockfile": "^4.1.2",
       },
@@ -261,13 +261,13 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@kolisachint/hoocode-agent": ["@kolisachint/hoocode-agent@0.4.66", "", { "dependencies": { "@kolisachint/hoocode-agent-core": "^0.4.66", "@kolisachint/hoocode-ai": "^0.4.66", "@kolisachint/hoocode-tui": "^0.4.66", "@silvia-odwyer/photon-node": "^0.3.4", "chalk": "^5.5.0", "cli-highlight": "^2.1.11", "diff": "^8.0.2", "extract-zip": "^2.0.1", "file-type": "^21.1.1", "glob": "^13.0.1", "hosted-git-info": "^9.0.2", "ignore": "^7.0.5", "jiti": "^2.7.0", "marked": "^15.0.12", "minimatch": "^10.2.3", "proper-lockfile": "^4.1.2", "strip-ansi": "^7.1.0", "typebox": "^1.1.24", "undici": "^7.19.1", "uuid": "^14.0.0", "yaml": "^2.8.2" }, "optionalDependencies": { "@mariozechner/clipboard": "^0.3.5" }, "bin": { "hoocode": "bin/hoocode.js", "hoo": "bin/hoocode.js" } }, "sha512-1jF2vXphRvPxb9NFRo2gsZ8f3Vwz/3q798zE9rB21lSjmWO+OyY2MdqFzLsoqkGjE2vK3mOYJbK6JLWIMdj7/w=="],
+    "@kolisachint/hoocode-agent": ["@kolisachint/hoocode-agent@0.4.67", "", { "dependencies": { "@kolisachint/hoocode-agent-core": "^0.4.67", "@kolisachint/hoocode-ai": "^0.4.67", "@kolisachint/hoocode-tui": "^0.4.67", "@silvia-odwyer/photon-node": "^0.3.4", "chalk": "^5.5.0", "cli-highlight": "^2.1.11", "diff": "^8.0.2", "extract-zip": "^2.0.1", "file-type": "^21.1.1", "glob": "^13.0.1", "hosted-git-info": "^9.0.2", "ignore": "^7.0.5", "jiti": "^2.7.0", "marked": "^15.0.12", "minimatch": "^10.2.3", "proper-lockfile": "^4.1.2", "strip-ansi": "^7.1.0", "typebox": "^1.1.24", "undici": "^7.19.1", "uuid": "^14.0.0", "yaml": "^2.8.2" }, "optionalDependencies": { "@mariozechner/clipboard": "^0.3.5" }, "bin": { "hoocode": "bin/hoocode.js", "hoo": "bin/hoocode.js" } }, "sha512-u2lA1eFJzaR66t3kmXDq5mJOUTnnl5a3PRlvmKZ/onGXkbcu7IjkJOPYMH3lqT2W27Uf+nDUIhHIdA5K3ZDyTQ=="],
 
-    "@kolisachint/hoocode-agent-core": ["@kolisachint/hoocode-agent-core@0.4.66", "", { "dependencies": { "@kolisachint/hoocode-ai": "^0.4.66", "ignore": "^7.0.5", "typebox": "^1.1.24", "uuid": "^14.0.0", "yaml": "^2.8.2" } }, "sha512-jPCggwTjC1qyPjEwACaBci7kRhe6TEycvsnG/JhW4gnJgpPEuILmUM6zAhf/YHcKlVyZIdEuttNRf5SNR+CRwA=="],
+    "@kolisachint/hoocode-agent-core": ["@kolisachint/hoocode-agent-core@0.4.67", "", { "dependencies": { "@kolisachint/hoocode-ai": "^0.4.67", "ignore": "^7.0.5", "typebox": "^1.1.24", "uuid": "^14.0.0", "yaml": "^2.8.2" } }, "sha512-2fLkhshExD5nI2pNIFyP0OqKUOiJjCZuhbuce8oQtSvLXEx4YcDn/YGZHBYmefT8vD0gutMfQ+I25tP2CmV9nA=="],
 
-    "@kolisachint/hoocode-ai": ["@kolisachint/hoocode-ai@0.4.66", "", { "dependencies": { "@anthropic-ai/sdk": "^0.91.1", "@aws-sdk/client-bedrock-runtime": "^3.1030.0", "@google/genai": "^1.40.0", "@mistralai/mistralai": "^2.2.0", "@smithy/node-http-handler": "^4.7.5", "@smithy/types": "^4.14.2", "chalk": "^5.6.2", "openai": "6.26.0", "partial-json": "^0.1.7", "proxy-agent": "^6.5.0", "typebox": "^1.1.24", "undici": "^7.19.1", "zod-to-json-schema": "^3.24.6" }, "bin": { "hoocode-ai": "dist/cli.js" } }, "sha512-KY/klckyz3sL1Sk1SmSqBVrZOU5wf0IE+m+QALrHwYbIqqT2lgtzloLKcupm3np/q3zKue97g5Dv4PuyLnlT5Q=="],
+    "@kolisachint/hoocode-ai": ["@kolisachint/hoocode-ai@0.4.67", "", { "dependencies": { "@anthropic-ai/sdk": "^0.91.1", "@aws-sdk/client-bedrock-runtime": "^3.1030.0", "@google/genai": "^1.40.0", "@mistralai/mistralai": "^2.2.0", "@smithy/node-http-handler": "^4.7.5", "@smithy/types": "^4.14.2", "chalk": "^5.6.2", "openai": "6.26.0", "partial-json": "^0.1.7", "proxy-agent": "^6.5.0", "typebox": "^1.1.24", "undici": "^7.19.1", "zod-to-json-schema": "^3.24.6" }, "bin": { "hoocode-ai": "dist/cli.js" } }, "sha512-iJdlNCp8kr3b3QKb8ntxGKKwEHwQp7CfvXHaEH9lnCEJ8SquJIO6M8tWGyIz3VgoM/eHjqFaNWu4Nhd6Ym6tUA=="],
 
-    "@kolisachint/hoocode-tui": ["@kolisachint/hoocode-tui@0.4.66", "", { "dependencies": { "@types/mime-types": "^2.1.4", "chalk": "^5.5.0", "get-east-asian-width": "^1.3.0", "marked": "^15.0.12", "mime-types": "^3.0.1" }, "optionalDependencies": { "koffi": "^2.9.0" } }, "sha512-XKUgW4LnndFXa1KunsC0w0Ze+XpJ1MaAjelRcbPsZvldPzn+jwA6ItVKVk2+7TYx5la0lIjZz6r251hiQm7xHw=="],
+    "@kolisachint/hoocode-tui": ["@kolisachint/hoocode-tui@0.4.67", "", { "dependencies": { "@types/mime-types": "^2.1.4", "chalk": "^5.5.0", "get-east-asian-width": "^1.3.0", "marked": "^15.0.12", "mime-types": "^3.0.1" }, "optionalDependencies": { "koffi": "^2.9.0" } }, "sha512-vlwMoZwbEbjnXErooiOVYzEMo5QSmrhlaSJ/DO0jA9wuv+V4jTYcXFCmJeuyGf9AcWfxSZLpyGLCptDRaAW01g=="],
 
     "@kolisachint/hooteams-bridge": ["@kolisachint/hooteams-bridge@workspace:packages/bridge"],
 
