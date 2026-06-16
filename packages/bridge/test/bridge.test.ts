@@ -109,6 +109,27 @@ describe("SSE replay + live ordering", () => {
 		expect(events.every((event) => event.role === "coder" && event.agentId === "id-1")).toBe(true);
 	});
 
+	test("an idle stream emits SSE comment heartbeats so the connection stays warm", async () => {
+		const channel = new TeamChannel();
+		const bridge = new SSEBridge(channel, 20); // 20ms heartbeat for the test
+		const agent = new FakeAgent();
+		channel.attach("coder", "id-1", agent);
+
+		// Read the raw stream so comment frames are visible (the data-frame helper
+		// skips them). With no events flowing, only heartbeats should arrive.
+		const reader = bridge.stream("coder").getReader();
+		const decoder = new TextDecoder();
+		let text = "";
+		const deadline = Date.now() + 1000;
+		while (!text.includes(": ping\n\n") && Date.now() < deadline) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			text += decoder.decode(value, { stream: true });
+		}
+		expect(text).toContain(": ping\n\n");
+		await reader.cancel();
+	});
+
 	test("/events without a role merges all agents; ?replay=N trims history", async () => {
 		const { channel, base } = startServer();
 		const coder = new FakeAgent();

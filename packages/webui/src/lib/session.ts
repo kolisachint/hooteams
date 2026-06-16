@@ -1,4 +1,4 @@
-import type { DagNode, DagState, RunInfo, SessionEntry } from "./types";
+import type { DagNode, DagState, PendingApproval, RunInfo, SessionEntry } from "./types";
 
 /**
  * Parse a JSONL session file content into a RunInfo.
@@ -12,6 +12,10 @@ export function parseSession(jsonl: string): RunInfo | null {
 	let status: RunInfo["status"] = "running";
 	let startedAt: number | undefined;
 	let endedAt: number | undefined;
+	// Gates opened (approval_request) minus those answered (approval_response).
+	// What's left is still awaiting a decision at the end of the session — a
+	// marker-driven pause can land on any node, not just statically-gated ones.
+	const pending: Record<string, PendingApproval> = {};
 
 	for (const line of lines) {
 		let entry: SessionEntry;
@@ -108,6 +112,20 @@ export function parseSession(jsonl: string): RunInfo | null {
 				}
 				break;
 			}
+
+			case "approval_request": {
+				const taskId = data.taskId;
+				if (taskId) {
+					pending[taskId] = { taskId, question: data.question, options: data.options };
+				}
+				break;
+			}
+
+			case "approval_response": {
+				const taskId = data.taskId;
+				if (taskId) delete pending[taskId];
+				break;
+			}
 		}
 	}
 
@@ -120,6 +138,7 @@ export function parseSession(jsonl: string): RunInfo | null {
 		status,
 		startedAt,
 		endedAt,
+		pending: Object.keys(pending).length > 0 ? pending : undefined,
 	};
 }
 
@@ -135,6 +154,7 @@ function mapStatus(status: string): DagNode["status"] {
 		case "failed":
 			return "error";
 		case "pending":
+		case "paused":
 			return "pending";
 		case "retrying":
 		case "retry":
@@ -195,7 +215,7 @@ export async function listSessions(host: string): Promise<Array<{ runId: string;
 	try {
 		const resp = await fetch(`${host}/sessions`);
 		if (resp.ok) {
-			return await resp.json();
+			return (await resp.json()) as Array<{ runId: string; filename: string }>;
 		}
 	} catch {
 		// Continue

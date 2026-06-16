@@ -92,7 +92,10 @@ export function buildMission(
 		const node = dag[id]!;
 		const deps = node.deps ?? [];
 		const depsDone = deps.every((d) => doneSet.has(d));
-		const isPendingGate = !!pending[id] && !!node.gate;
+		// A pending approval is a gate regardless of the node's static `gate` config:
+		// a marker-driven AWAITING_APPROVAL pause can fire on any node, not just ones
+		// declared with gate:true. Surfacing it here is what shows the question + options.
+		const isPendingGate = !!pending[id];
 
 		let status: MissionStatus;
 		if (isPendingGate) {
