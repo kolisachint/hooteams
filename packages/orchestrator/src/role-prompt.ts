@@ -45,6 +45,12 @@ export interface RolePromptInputs {
 	promptGuidelines?: string[];
 	/** Extra skill paths beyond hoocode's defaults (RoleConfig.skillPaths). */
 	skillPaths?: string[];
+	/**
+	 * Project rules injected as additional context files, after the files hoocode
+	 * discovers in `cwd` (e.g. `.hooteams/rules/**`). Same `{ path, content }`
+	 * shape buildSystemPrompt expects.
+	 */
+	extraContextFiles?: Array<{ path: string; content: string }>;
 	/** Tools registered for this node; their names/descriptions drive the tool list. */
 	tools: AgentTool<any>[];
 	/** Working directory the role runs in. */
@@ -70,6 +76,7 @@ export function buildRoleSystemPrompt(inputs: RolePromptInputs, api: HoocodeProm
 
 	const agentDir = api.getAgentDir();
 	const { agentsFiles } = api.loadProjectContextFiles({ cwd: inputs.cwd, agentDir });
+	const contextFiles = [...agentsFiles, ...(inputs.extraContextFiles ?? [])];
 	const { skills } = api.loadSkills({
 		cwd: inputs.cwd,
 		agentDir,
@@ -86,7 +93,7 @@ export function buildRoleSystemPrompt(inputs: RolePromptInputs, api: HoocodeProm
 		selectedTools: inputs.tools.map((tool) => tool.name),
 		toolSnippets,
 		promptGuidelines: inputs.promptGuidelines,
-		contextFiles: agentsFiles,
+		contextFiles,
 		skills,
 		cwd: inputs.cwd,
 	});

@@ -122,6 +122,8 @@ export type TeamEvent =
 export interface RoleConfig {
 	role: string;
 	systemPrompt: string;
+	/** Optional grouping label for the role (e.g. "deep", "quick"). Cosmetic today. */
+	category?: string;
 	/** Appendix injected after the base prompt and guidelines (e.g. "focus on security"). */
 	appendSystemPrompt?: string;
 	/** Extra guideline bullet points added to the standard, tool-aware guidelines. */

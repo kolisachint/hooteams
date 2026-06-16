@@ -47,6 +47,7 @@ After `bun install` the `hooteams` binary is linked globally (via `npm link` in 
 hooteams — multi-agent orchestration for hoocode
 
 Usage:
+  hooteams work   "<goal>" [--config p] [--model id] [--keep] [--out f] [--host …]  plan + run a goal end-to-end
   hooteams start  [--config path] [--port 4242] [--resume] [--no-webui]  start the team server + live web UI
   hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
   hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
@@ -58,6 +59,27 @@ Usage:
   hooteams stop   [--host …]                                stop the server gracefully
   hooteams help                                             show usage
 ```
+
+### `hooteams work`
+
+The one-liner: plan a goal, make sure a server is running, submit the plan, and follow it to completion — no separate `start` then `run`.
+
+```bash
+hooteams work "build the auth module"
+```
+
+If a server is already reachable at `--host`, `work` reuses it; otherwise it boots an ephemeral in-process server (and the live web UI) for the duration and stops it when the run settles. Pass `--keep` to leave that server (and the UI) running afterward. This is the decomposed `plan` → `run` flow collapsed into one command; the individual commands remain for when you want to review the plan or drive an existing server.
+
+| Flag                | Default                | Description                                                        |
+|---------------------|------------------------|--------------------------------------------------------------------|
+| `--config`          | `hooteams.config.json` | Team config used when booting an ephemeral server                  |
+| `--model`           | `claude-sonnet-4-5`    | Planner model id                                                   |
+| `--keep`            | off                    | Leave the booted server + web UI running after the run            |
+| `--out`             | off                    | Also write the plan to this file                                   |
+| `--host`            | `http://localhost:4242`| Reuse a server here instead of booting one                        |
+| `--detach`          | off                    | Submit and exit without following (requires a running server)      |
+| `--allow-autonomous`| off                    | Skip the human-in-the-loop completion gate                         |
+| `--no-webui`        | off                    | Don't serve the web UI when booting a server                       |
 
 ### `hooteams plan`
 
@@ -240,7 +262,10 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
       "thinkingLevel": "off",                           // "off" | "low" | "medium" | "high" (falls back to defaults.thinkingLevel, then "off")
       "defaultTools": true,                             // include built-in coding tools: bash/read/edit/write/grep/find/ls
       "mcpConfigPath": "./mcp.json",                    // path to mcp.json for MCP server tools (requires async spawn)
-      "cwd": "/path/to/project"                         // working directory for agent tools (default: process.cwd())
+      "cwd": "/path/to/project",                        // working directory for agent tools (default: process.cwd())
+      "category": "deep",                               // optional grouping label (cosmetic today)
+      "appendSystemPrompt": "Focus on safety.",         // optional appendix after the role prompt
+      "skillPaths": ["./skills"]                        // extra skill directories beyond hoocode's defaults
     },
     {
       "role": "coder",
@@ -253,6 +278,12 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
 
   // Max agents that can run concurrently
   "maxConcurrent": 3,
+
+  // Directory of project rule files (*.md, searched recursively) injected into
+  // every role's system prompt as extra context (default: ".hooteams/rules";
+  // a missing directory is ignored). This is hooteams' own rule channel, added
+  // after the project context hoocode discovers (AGENTS.md, CLAUDE.md, …).
+  "rulesDir": ".hooteams/rules",
 
   // Server port (can also be set via --port flag or PORT env var)
   "port": 4242,
@@ -296,6 +327,10 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
 | `defaultTools`  | `boolean`  |          | `false`           | Give the agent hoocode's built-in coding tools (`bash`, `read`, `edit`, `write`, `grep`, `find`, `ls`) |
 | `mcpConfigPath` | `string`   |          |                   | Path to an `mcp.json` file; MCP server tools are loaded and appended to the agent's tool set     |
 | `cwd`           | `string`   |          | `process.cwd()`   | Working directory for the agent's tools                                                          |
+| `category`      | `string`   |          |                   | Optional grouping label (e.g. `deep`, `quick`); cosmetic today                                   |
+| `appendSystemPrompt` | `string` |       |                   | Appendix injected after the role prompt (before project context)                                |
+| `promptGuidelines` | `string[]` |      |                   | Extra guideline bullets added to hoocode's tool-aware guidelines                                 |
+| `skillPaths`    | `string[]` |          |                   | Extra skill directories beyond hoocode's defaults                                                |
 
 ### Minimal config example
 

@@ -104,6 +104,11 @@ export interface NodeHarnessFactoryOptions {
 	team?: Team;
 	/** Project-scoped shared memory. When provided, agents get the memory_read and memory_write tools. */
 	memory?: TeamMemory;
+	/**
+	 * Project rules (e.g. `.hooteams/rules/**`) injected into every role's system
+	 * prompt as extra context files, after hoocode's discovered project context.
+	 */
+	rules?: Array<{ path: string; content: string }>;
 }
 
 /** Deterministic node session id, so resuming a restored node reopens its conversation. */
@@ -176,6 +181,7 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 			appendSystemPrompt: config.appendSystemPrompt,
 			promptGuidelines: config.promptGuidelines,
 			skillPaths: config.skillPaths,
+			extraContextFiles: options.rules,
 			tools,
 			cwd,
 		})}\n\n${HITL_SYSTEM_PROMPT}`;

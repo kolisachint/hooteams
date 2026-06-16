@@ -43,6 +43,12 @@ export interface ServerConfig {
 	webui?: boolean;
 	/** Override the built web UI directory. Defaults to the @kolisachint/hooteams-webui dist. */
 	webuiRoot?: string;
+	/**
+	 * Directory of project rule files (`*.md`, searched recursively) injected into
+	 * every role's system prompt as extra context. Defaults to `.hooteams/rules`;
+	 * a missing directory is simply ignored.
+	 */
+	rulesDir?: string;
 }
 
 export const DEFAULT_PORT = 4242;
@@ -64,6 +70,7 @@ export interface RawServerConfig {
 	validator?: string;
 	webui?: boolean;
 	webuiRoot?: string;
+	rulesDir?: string;
 }
 
 /**
@@ -131,6 +138,9 @@ export function validateConfig(raw: RawServerConfig, source: string): ServerConf
 	if (raw.webuiRoot !== undefined && typeof raw.webuiRoot !== "string") {
 		throw new Error(`${source}: "webuiRoot" must be a string`);
 	}
+	if (raw.rulesDir !== undefined && typeof raw.rulesDir !== "string") {
+		throw new Error(`${source}: "rulesDir" must be a string`);
+	}
 	return {
 		defaults: raw.defaults,
 		team,
@@ -145,5 +155,6 @@ export function validateConfig(raw: RawServerConfig, source: string): ServerConf
 		validator: raw.validator,
 		webui: raw.webui,
 		webuiRoot: raw.webuiRoot,
+		rulesDir: raw.rulesDir,
 	};
 }

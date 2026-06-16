@@ -2,11 +2,13 @@
 import { loadConfig, startServer } from "@kolisachint/hooteams-server";
 import pkg from "../package.json" with { type: "json" };
 import { banner } from "./banner.js";
-import { attach, nudge, pending, plan, resume, run, status, stop } from "./commands.js";
+import { attach, nudge, pending, plan, resume, run, status, stop, work } from "./commands.js";
 
 const USAGE = `hooteams — multi-agent orchestration for hoocode
 
 Usage:
+  hooteams work   "<goal>" [--config p] [--model id] [--keep] [--out f] [--host …]
+                                                           plan + run a goal end-to-end (boots a server if needed)
   hooteams start  [--config path] [--port 4242] [--resume] [--allow-autonomous] [--no-webui]
                                                            start the team server + live web UI
   hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
@@ -25,7 +27,8 @@ Options:
   --no-webui  do not serve the live web UI (served on the same port by default)
   --detach   print the run id and exit instead of following the run
   --out      write the dry-run plan to this file (hooteams run accepts it)
-  --model    planner model id for hooteams plan (default claude-sonnet-4-5)
+  --model    planner model id for hooteams plan/work (default claude-sonnet-4-5)
+  --keep     (work) leave the booted server + web UI running after the run
 `;
 
 const args = process.argv.slice(2);
@@ -53,6 +56,21 @@ const host = readFlag("host", "http://localhost:4242")!.replace(/\/+$/, "");
 
 try {
 	switch (command) {
+		case "work": {
+			const goal = positional(0);
+			if (!goal) throw new Error('Usage: hooteams work "<goal>" [--config p] [--model id] [--keep] [--detach] [--out f]');
+			await work(host, goal, {
+				config: readFlag("config"),
+				model: readFlag("model"),
+				provider: readFlag("provider"),
+				keep: args.includes("--keep"),
+				detach: args.includes("--detach"),
+				allowAutonomous: args.includes("--allow-autonomous"),
+				webui: args.includes("--no-webui") ? false : undefined,
+				out: readFlag("out"),
+			});
+			break;
+		}
 		case "start": {
 			const config = await loadConfig(readFlag("config"));
 			const portFlag = readFlag("port");

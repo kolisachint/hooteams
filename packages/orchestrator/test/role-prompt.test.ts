@@ -65,4 +65,21 @@ describe("buildRoleSystemPrompt", () => {
 		expect(opts.contextFiles).toEqual([{ path: "AGENTS.md", content: "rules for /srv/app" }]);
 		expect(opts.skills).toEqual([{ name: "deploy" }]);
 	});
+
+	test("appends extra context files (project rules) after hoocode's discovered context", () => {
+		const { api, calls } = fakeApi();
+		buildRoleSystemPrompt(
+			{
+				basePrompt: "base",
+				tools: [],
+				cwd: "/srv/app",
+				extraContextFiles: [{ path: ".hooteams/rules/style.md", content: "use tabs" }],
+			},
+			api,
+		);
+		expect(calls[0].contextFiles).toEqual([
+			{ path: "AGENTS.md", content: "rules for /srv/app" },
+			{ path: ".hooteams/rules/style.md", content: "use tabs" },
+		]);
+	});
 });

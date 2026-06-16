@@ -1,7 +1,15 @@
-import { createHoocodeAuth, getModel, Planner, Team, TeamChannel } from "@kolisachint/hooteams-orchestrator";
+import { createHoocodeAuth, getModel, Planner, type RoleConfig, Team, TeamChannel } from "@kolisachint/hooteams-orchestrator";
+import { loadConfig, type RunningServer, startServer } from "@kolisachint/hooteams-server";
 import { createInterface } from "node:readline/promises";
 import { StreamRenderer } from "./render.js";
 import { consumeSSE } from "./sse.js";
+
+/** A planned task graph: what the dry-run planner produces and `/runs` accepts. */
+interface PlanDocument {
+	goal: string;
+	roles: RoleConfig[];
+	tasks: Array<{ id: string; role: string; deps?: string[] }>;
+}
 
 export async function nudge(host: string, role: string, message: string): Promise<void> {
 	const response = await fetch(`${host}/steer`, {
@@ -40,6 +48,16 @@ export async function status(host: string): Promise<void> {
 export async function run(host: string, file: string, follow: boolean): Promise<void> {
 	const parsed = JSON.parse(await Bun.file(file).text()) as unknown;
 	const body = Array.isArray(parsed) ? { tasks: parsed } : parsed;
+	const { failed } = await submitAndFollow(host, body, follow);
+	if (failed) process.exit(1);
+}
+
+/**
+ * POST a task graph to /runs and, when `follow`, stream its lifecycle on /events
+ * until the dag settles. Returns the run id and whether it failed — the caller
+ * decides how to exit (so an ephemeral server can be torn down first).
+ */
+export async function submitAndFollow(host: string, body: unknown, follow: boolean): Promise<{ runId: string; failed: boolean }> {
 	const response = await fetch(`${host}/runs`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -51,7 +69,7 @@ export async function run(host: string, file: string, follow: boolean): Promise<
 	}
 	const { runId } = (await response.json()) as { runId: string };
 	console.log(`run started: ${runId}`);
-	if (!follow) return;
+	if (!follow) return { runId, failed: false };
 	console.log("following the run — ctrl-c detaches (the run keeps going)\n");
 
 	let failed = false;
@@ -88,7 +106,7 @@ export async function run(host: string, file: string, follow: boolean): Promise<
 		},
 		controller.signal,
 	);
-	if (failed) process.exit(1);
+	return { runId, failed };
 }
 
 /**
@@ -99,6 +117,27 @@ export async function run(host: string, file: string, follow: boolean): Promise<
  * the server merges the plan's roles into the team for that run).
  */
 export async function plan(goal: string, outFile?: string, modelId?: string, provider?: string): Promise<void> {
+	const document = await runPlanner(goal, modelId, provider);
+	if (!document) {
+		console.log("\nthe planner produced no tasks");
+		return;
+	}
+	printPlan(document);
+	const json = `${JSON.stringify(document, null, "\t")}\n`;
+	if (outFile) {
+		await Bun.write(outFile, json);
+		console.log(`\nwrote ${outFile} — review it, then start the run with: hooteams run ${outFile}`);
+	} else {
+		console.log(`\n${json}`);
+	}
+}
+
+/**
+ * Run the dry-run planner against a goal in-process and return the planned task
+ * graph ({ goal, roles, tasks }), or null when it produces no tasks. Planning
+ * needs no server — spawn_agent/delegate_task only record the plan.
+ */
+export async function runPlanner(goal: string, modelId?: string, provider?: string): Promise<PlanDocument | null> {
 	const channel = new TeamChannel();
 	const getApiKey = createHoocodeAuth();
 	const team = new Team(channel, { getApiKey });
@@ -112,22 +151,107 @@ export async function plan(goal: string, outFile?: string, modelId?: string, pro
 	});
 	await planner.plan(goal);
 	const buffer = planner.planBuffer!;
-	if (buffer.tasks.length === 0) {
-		console.log("\nthe planner produced no tasks");
-		return;
-	}
-	console.log(`\nplan: ${buffer.roles.length} role(s), ${buffer.tasks.length} task(s)`);
-	for (const task of buffer.tasks) {
+	if (buffer.tasks.length === 0) return null;
+	return { goal, roles: buffer.roles, tasks: buffer.tasks };
+}
+
+function printPlan(document: PlanDocument): void {
+	console.log(`\nplan: ${document.roles.length} role(s), ${document.tasks.length} task(s)`);
+	for (const task of document.tasks) {
 		const after = task.deps && task.deps.length > 0 ? ` (after ${task.deps.join(", ")})` : "";
 		console.log(`  ${task.id} → ${task.role}${after}`);
 	}
-	const document = `${JSON.stringify({ goal, roles: buffer.roles, tasks: buffer.tasks }, null, "\t")}\n`;
-	if (outFile) {
-		await Bun.write(outFile, document);
-		console.log(`\nwrote ${outFile} — review it, then start the run with: hooteams run ${outFile}`);
-	} else {
-		console.log(`\n${document}`);
+}
+
+export interface WorkOptions {
+	config?: string;
+	model?: string;
+	provider?: string;
+	/** Leave an ephemeral server running after the run (keeps the web UI up). */
+	keep?: boolean;
+	/** Submit and exit without following (requires an already-running server). */
+	detach?: boolean;
+	allowAutonomous?: boolean;
+	webui?: boolean;
+	/** Also persist the plan to this file. */
+	out?: string;
+}
+
+/**
+ * One-shot entry point: plan a goal, ensure a server is running, submit the
+ * plan, and follow it to completion. If a server is reachable at `host` it is
+ * reused; otherwise an ephemeral in-process server is booted for the duration
+ * and stopped when the run settles (unless --keep).
+ */
+export async function work(host: string, goal: string, opts: WorkOptions = {}): Promise<void> {
+	const reachable = await serverReachable(host);
+	if (!reachable && opts.detach) {
+		throw new Error("--detach needs a running server — start one with `hooteams start`, or drop --detach");
 	}
+
+	let booted: RunningServer | undefined;
+	let baseUrl = host;
+	if (reachable) {
+		console.log(`using running server at ${host}`);
+	} else {
+		const config = await loadConfig(opts.config);
+		booted = startServer(config, {
+			allowAutonomous: opts.allowAutonomous || undefined,
+			webui: opts.webui === false ? false : undefined,
+		});
+		baseUrl = `http://localhost:${booted.port}`;
+		console.log(`booted server on ${baseUrl}`);
+		if (booted.webuiRoot) console.log(`live web UI:  ${baseUrl}`);
+		if (config.team.length > 0) console.log(`team: ${config.team.map(formatRole).join(", ")}`);
+	}
+
+	let failed = false;
+	try {
+		const document = await runPlanner(goal, opts.model, opts.provider);
+		if (!document) {
+			console.log("\nthe planner produced no tasks");
+		} else {
+			printPlan(document);
+			if (opts.out) {
+				await Bun.write(opts.out, `${JSON.stringify(document, null, "\t")}\n`);
+				console.log(`\nwrote ${opts.out}`);
+			}
+			console.log("");
+			({ failed } = await submitAndFollow(baseUrl, document, !opts.detach));
+		}
+	} catch (error) {
+		if (booted && !opts.keep) await booted.stop();
+		throw error;
+	}
+
+	if (booted) {
+		if (opts.keep) {
+			console.log(`\nserver still running on ${baseUrl} — ctrl-c or \`hooteams stop\` to shut down`);
+			const shutdown = async (): Promise<void> => {
+				await booted!.stop();
+				process.exit(failed ? 1 : 0);
+			};
+			process.on("SIGINT", () => void shutdown());
+			process.on("SIGTERM", () => void shutdown());
+			return; // the listening server keeps the process alive
+		}
+		await booted.stop();
+	}
+	if (failed) process.exit(1);
+}
+
+/** True when a hooteams server answers /status at `host`. */
+async function serverReachable(host: string): Promise<boolean> {
+	try {
+		const response = await fetch(`${host}/status`, { signal: AbortSignal.timeout(1000) });
+		return response.ok;
+	} catch {
+		return false;
+	}
+}
+
+function formatRole(role: { role: string; category?: string }): string {
+	return role.category ? `${role.role} (${role.category})` : role.role;
 }
 
 /** List the active run's unanswered approval gates. */
