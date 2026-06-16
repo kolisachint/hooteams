@@ -1,179 +1,243 @@
-import { useEffect, useState } from "react";
-import { DagViewer } from "./components/DagViewer";
-import { TeamBoard } from "./components/TeamBoard";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Icon } from "./components/Icon";
+import { Inspector } from "./components/Inspector";
+import { type StageLayout, StagesView } from "./components/StagesView";
+import { TeamView } from "./components/TeamView";
+import { buildMission } from "./lib/mission";
 import { fetchSession } from "./lib/session";
 import { useStore } from "./lib/store";
-import { connect, disconnect, HOOTEAMS_HOST, HOOTEAMS_HOST_LABEL } from "./lib/stream";
-import type { RunInfo } from "./lib/types";
+import { connect, disconnect, HOOTEAMS_HOST, resumeTask } from "./lib/stream";
 
-function ConnectionBadge() {
-	const connection = useStore((state) => state.connection);
-	const color =
-		connection === "live" ? "var(--cyan)" : connection === "reconnecting" ? "var(--amber)" : "var(--text-faint)";
-	return (
-		<span className="flex items-center gap-1.5 text-[11px]" style={{ color }}>
-			<span
-				className={`h-1.5 w-1.5 rounded-full ${connection === "live" ? "presence" : ""}`}
-				style={{ background: color }}
-			/>
-			{connection}
-			<span style={{ color: "var(--text-faint)" }}>· {HOOTEAMS_HOST_LABEL}</span>
-		</span>
-	);
+type View = "taskgraph" | "team";
+
+const LS = {
+	view: "ht.view",
+	layout: "ht.layout",
+	theme: "ht.theme",
+	minimap: "ht.minimap",
+};
+
+function readBool(key: string, fallback: boolean): boolean {
+	const v = localStorage.getItem(key);
+	return v == null ? fallback : v === "1";
 }
 
-function RunHeader({ runInfo }: { runInfo: RunInfo }) {
-	const taskCount = Object.keys(runInfo.dag).length;
-	const doneCount = Object.values(runInfo.dag).filter((n) => n.status === "done").length;
-	const errorCount = Object.values(runInfo.dag).filter((n) => n.status === "error").length;
-
+// ── Top bar ───────────────────────────────────────────────────────────────────
+function TopBar({
+	view,
+	setView,
+	runStatus,
+	gatePending,
+	theme,
+	onTheme,
+	minimap,
+	setMinimap,
+}: {
+	view: View;
+	setView: (v: View) => void;
+	runStatus: string;
+	gatePending: string | null;
+	theme: string;
+	onTheme: () => void;
+	minimap: boolean;
+	setMinimap: (v: boolean) => void;
+}) {
+	const [settingsOpen, setSettingsOpen] = useState(false);
 	return (
-		<div
-			className="rounded p-3 mb-4"
-			style={{
-				border: "1px solid var(--line)",
-				background: "var(--panel)",
-				borderRadius: "4px",
-			}}
-		>
-			<div className="flex items-center gap-3">
-				<span
-					className="text-[10px] uppercase font-semibold"
-					style={{ color: "var(--text-faint)", letterSpacing: "0.12em" }}
-				>
-					Run
-				</span>
-				<span className="text-[12px] font-mono" style={{ color: "var(--text)" }}>
-					{runInfo.runId}
-				</span>
-				<span className="ml-auto text-[11px]" style={{ color: "var(--text-faint)" }}>
-					{doneCount}/{taskCount} done
-					{errorCount > 0 && <span style={{ color: "#D9788A" }}> · {errorCount} error</span>}
+		<header className="topbar">
+			<div className="tb-brand">
+				<span className="tb-mark">h</span>
+				<span className="tb-word">
+					hoo<b>teams</b>
 				</span>
 			</div>
-			{runInfo.goal && (
-				<p className="text-[12px] mt-2 leading-relaxed" style={{ color: "var(--text-dim)" }}>
-					{runInfo.goal}
-				</p>
-			)}
-		</div>
-	);
-}
-
-/** Live task graph for the active run, shown above the agent board. */
-function LiveDag() {
-	const runInfo = useStore((state) => state.runInfo);
-	if (!runInfo || Object.keys(runInfo.dag).length === 0) return null;
-	return (
-		<div className="mb-6">
-			<RunHeader runInfo={runInfo} />
-			<DagViewer runInfo={runInfo} />
-		</div>
-	);
-}
-
-export function App() {
-	const [runInfo, setRunInfo] = useState<RunInfo | null>(null);
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	useEffect(() => {
-		const params = new URLSearchParams(window.location.search);
-		const runId = params.get("runId");
-
-		if (runId) {
-			// Load session from server
-			setLoading(true);
-			setError(null);
-			fetchSession(runId, HOOTEAMS_HOST)
-				.then((info) => {
-					if (info) {
-						setRunInfo(info);
-					} else {
-						setError(`Session not found: ${runId}`);
-					}
-				})
-				.catch((err) => {
-					setError(err instanceof Error ? err.message : "Failed to load session");
-				})
-				.finally(() => {
-					setLoading(false);
-				});
-		} else {
-			// Connect to live stream
-			connect();
-		}
-		return disconnect;
-	}, []);
-
-	// If we have a runId, show the DAG viewer
-	const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-	const hasRunId = params?.has("runId");
-
-	if (hasRunId) {
-		return (
-			<div className="mx-auto max-w-[1200px] px-6 py-5">
-				<header className="mb-6 flex items-baseline gap-2">
-					<h1 className="text-[15px] font-semibold tracking-wide" style={{ color: "var(--text)" }}>
-						hoo<span style={{ color: "var(--cyan)" }}>◆</span>teams
-					</h1>
-					<span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
-						team mission control
-					</span>
-					<div className="ml-auto">
-						<a href="/" className="text-[11px] hover:underline" style={{ color: "var(--text-faint)" }}>
-							← live stream
-						</a>
-					</div>
-				</header>
-
-				{loading && (
-					<div className="flex items-center justify-center py-32" style={{ color: "var(--text-faint)" }}>
-						<div className="chip-spinner mr-2" />
-						<span className="text-[13px]">loading session…</span>
-					</div>
-				)}
-
-				{error && (
-					<div
-						className="rounded p-4 text-center"
-						style={{
-							border: "1px solid #D9788A",
-							background: "rgba(217, 120, 138, 0.08)",
-							color: "#D9788A",
-							borderRadius: "4px",
-						}}
-					>
-						{error}
-					</div>
-				)}
-
-				{runInfo && (
+			<button
+				type="button"
+				className={`tb-view${view === "taskgraph" ? " on" : ""}`}
+				onClick={() => setView("taskgraph")}
+				title="task graph"
+			>
+				<Icon name="graph" size={15} />
+				TaskGraph
+				{view === "taskgraph" && runStatus === "running" && <span className="tb-live" />}
+				{view === "taskgraph" && gatePending && <span className="tb-badge">1</span>}
+			</button>
+			<div className="spacer" />
+			<div className="tb-settings">
+				<button
+					type="button"
+					className={`tb-set${view === "team" ? " on" : ""}`}
+					onClick={() => setView(view === "team" ? "taskgraph" : "team")}
+					title="team config"
+				>
+					<Icon name="users" size={15} />
+					team
+				</button>
+				<button type="button" className="tb-set icon" onClick={onTheme} title="toggle theme">
+					<Icon name={theme === "dark" ? "sun" : "moon"} size={15} />
+				</button>
+				<button
+					type="button"
+					className={`tb-set icon${settingsOpen ? " on" : ""}`}
+					onClick={() => setSettingsOpen((o) => !o)}
+					title="settings"
+				>
+					<Icon name="sliders" size={15} />
+				</button>
+				{settingsOpen && (
 					<>
-						<RunHeader runInfo={runInfo} />
-						<DagViewer runInfo={runInfo} />
+						{/* click-away */}
+						<div
+							style={{ position: "fixed", inset: 0, zIndex: 65 }}
+							onClick={() => setSettingsOpen(false)}
+							aria-hidden="true"
+						/>
+						<div className="settings-pop">
+							<span className="sp-sect">TaskGraph</span>
+							<div className="sp-row">
+								<span>Run map</span>
+								<button
+									type="button"
+									className="sp-toggle"
+									data-on={minimap ? "1" : "0"}
+									aria-pressed={minimap}
+									onClick={() => setMinimap(!minimap)}
+								>
+									<i />
+								</button>
+							</div>
+							<span className="sp-sect">Appearance</span>
+							<div className="sp-row">
+								<span>Dark mode</span>
+								<button
+									type="button"
+									className="sp-toggle"
+									data-on={theme === "dark" ? "1" : "0"}
+									aria-pressed={theme === "dark"}
+									onClick={onTheme}
+								>
+									<i />
+								</button>
+							</div>
+						</div>
 					</>
 				)}
 			</div>
-		);
-	}
+		</header>
+	);
+}
 
-	// Default: live stream view
+// ── App ─────────────────────────────────────────────────────────────────────
+export function App() {
+	const runInfo = useStore((s) => s.runInfo);
+	const agents = useStore((s) => s.agents);
+	const events = useStore((s) => s.events);
+	const pending = useStore((s) => s.pending);
+	const connection = useStore((s) => s.connection);
+	const loadRun = useStore((s) => s.loadRun);
+
+	const [view, setView] = useState<View>(() => (localStorage.getItem(LS.view) === "team" ? "team" : "taskgraph"));
+	const [layout, setLayout] = useState<StageLayout>(() => {
+		const v = localStorage.getItem(LS.layout);
+		return v === "timeline" || v === "feed" ? v : "graph";
+	});
+	const [theme, setTheme] = useState<string>(() => localStorage.getItem(LS.theme) ?? "light");
+	const [minimap, setMinimap] = useState<boolean>(() => readBool(LS.minimap, true));
+	const [sel, setSel] = useState<string | null>(null);
+	const [feedFilter, setFeedFilter] = useState("all");
+	const [now, setNow] = useState(() => Date.now());
+	const [loadError, setLoadError] = useState<string | null>(null);
+
+	const sessionMode = useRef(false);
+
+	// Connect to the live stream, or load a session for replay (?runId=…).
+	useEffect(() => {
+		const runId = new URLSearchParams(window.location.search).get("runId");
+		if (runId) {
+			sessionMode.current = true;
+			fetchSession(runId, HOOTEAMS_HOST)
+				.then((info) => {
+					if (info) loadRun(info);
+					else setLoadError(`Session not found: ${runId}`);
+				})
+				.catch((err) => setLoadError(err instanceof Error ? err.message : "Failed to load session"));
+			return;
+		}
+		connect();
+		return disconnect;
+	}, [loadRun]);
+
+	// 1s clock for the elapsed counter / live timeline.
+	useEffect(() => {
+		const id = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(id);
+	}, []);
+
+	useEffect(() => localStorage.setItem(LS.view, view), [view]);
+	useEffect(() => localStorage.setItem(LS.layout, layout), [layout]);
+	useEffect(() => localStorage.setItem(LS.minimap, minimap ? "1" : "0"), [minimap]);
+	useEffect(() => {
+		localStorage.setItem(LS.theme, theme);
+		document.documentElement.classList.toggle("dark", theme === "dark");
+		document.documentElement.setAttribute("data-theme", theme);
+	}, [theme]);
+
+	const mission = useMemo(() => buildMission(runInfo, agents, pending), [runInfo, agents, pending]);
+	const elapsedSec = mission.run.startedAt ? ((mission.run.endedAt ?? now) - mission.run.startedAt) / 1000 : 0;
+
+	const onResume = (taskId: string, option: string) => {
+		setSel(null);
+		resumeTask(taskId, option).catch(() => {
+			/* the next snapshot will reflect the real gate state */
+		});
+	};
+
 	return (
-		<div className="mx-auto max-w-[1600px] px-6 py-5">
-			<header className="mb-6 flex items-baseline gap-2">
-				<h1 className="text-[15px] font-semibold tracking-wide" style={{ color: "var(--text)" }}>
-					hoo<span style={{ color: "var(--cyan)" }}>◆</span>teams
-				</h1>
-				<span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
-					team mission control
-				</span>
-				<div className="ml-auto">
-					<ConnectionBadge />
-				</div>
-			</header>
-			<LiveDag />
-			<TeamBoard />
+		<div className="shell">
+			<TopBar
+				view={view}
+				setView={setView}
+				runStatus={mission.run.status}
+				gatePending={mission.run.gatePending}
+				theme={theme}
+				onTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+				minimap={minimap}
+				setMinimap={setMinimap}
+			/>
+			<div className="workspace">
+				{view === "taskgraph" ? (
+					loadError ? (
+						<div className="app stages">
+							<div className="stage-empty">
+								<span className="se-mark">
+									<Icon name="alert" size={22} />
+								</span>
+								<div className="se-title">Couldn't load the run</div>
+								<div className="se-sub">{loadError}</div>
+							</div>
+						</div>
+					) : (
+						<StagesView
+							mission={mission}
+							connection={sessionMode.current ? "live" : connection}
+							elapsedSec={elapsedSec}
+							view={layout}
+							setView={setLayout}
+							minimap={minimap}
+							sel={sel}
+							onSelect={setSel}
+							events={events}
+							feedFilter={feedFilter}
+							setFeedFilter={setFeedFilter}
+						/>
+					)
+				) : (
+					<TeamView mission={mission} />
+				)}
+			</div>
+
+			<div className={`scrim${sel ? " show" : ""}`} onClick={() => setSel(null)} aria-hidden="true" />
+			<Inspector sel={sel} mission={mission} pending={pending} onClose={() => setSel(null)} onResume={onResume} />
 		</div>
 	);
 }
