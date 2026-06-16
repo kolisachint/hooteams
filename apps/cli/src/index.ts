@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 import { loadConfig, startServer } from "@kolisachint/hooteams-server";
+import pkg from "../package.json" with { type: "json" };
+import { banner } from "./banner.js";
 import { attach, nudge, pending, plan, resume, run, status, stop } from "./commands.js";
 
 const USAGE = `hooteams — multi-agent orchestration for hoocode
@@ -63,6 +65,7 @@ try {
 				allowAutonomous: args.includes("--allow-autonomous") || undefined,
 				webui: args.includes("--no-webui") ? false : undefined,
 			});
+			process.stdout.write(`\n${banner(pkg.version)}\n`);
 			console.log(`hooteams server listening on http://localhost:${running.port}`);
 			if (running.webuiRoot) {
 				console.log(`live web UI:  http://localhost:${running.port}  ← open in a browser to watch the team`);

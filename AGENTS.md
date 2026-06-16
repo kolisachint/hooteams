@@ -44,6 +44,33 @@ Bun **workspaces** (`packages/*`, `apps/*`). Internal deps are published as
 
 ---
 
+## 2.5 Fast lookup — where things live (read this before grepping)
+
+Most UI questions and feature-add tasks touch a small, predictable set of files.
+Start here so exploration is a direct read, not a repo-wide scan. **Delegate the
+scouting to the `explore` subagent and hand it these exact pointers** — it returns
+the answer without polluting the main reasoning context.
+
+| If the question / task is about… | Go straight to |
+| --- | --- |
+| A UI component looks/behaves wrong | `packages/webui/src/components/<Name>.tsx` |
+| What the UI renders / layout | `packages/webui/src/app.tsx` (mount points) |
+| How an event becomes UI state | `packages/webui/src/lib/store.ts` (zustand reducer) |
+| What events the UI knows about | `packages/webui/src/lib/types.ts` (mirrored wire types) |
+| SSE connect / dispatch | `packages/webui/src/lib/stream.ts` |
+| Replay / `?runId=` rendering | `packages/webui/src/lib/session.ts` |
+| Colors / spacing / design tokens | `packages/webui/src/index.css` + §7 below |
+| The event union / wire contract | `packages/orchestrator/src/types.ts` |
+| Where an event is emitted | `packages/orchestrator/src/team-orchestrator.ts` |
+| HTTP routes / SSE fan-out | `packages/bridge/src/{router,sse,serializer}.ts` |
+| CLI commands | `apps/cli/src/{commands,index}.ts` |
+
+> For "how is X rendered?" follow the data flow in §3 **backwards** from the
+> component; for "how do I add X?" follow it **forwards** and use the matching
+> recipe in §8–§11.
+
+---
+
 ## 3. The data flow (memorize this)
 
 The single most useful mental model. A change to live UI almost always touches a
@@ -173,6 +200,10 @@ the stream view followed this exact path.
 7. **Test** — assert the broadcast in `packages/orchestrator/test/team-orchestrator.test.ts`
    (subscribe to a `TeamChannel`, run a `TeamOrchestrator`, filter events).
 8. **Verify** — `bun test`, `bun run check`, `bun run build:webui`.
+
+> Fast start: before writing code, hand the §2.5 file pointers to the `explore`
+> subagent ("trace how `<event>` flows from publish to render") so the relevant
+> slice comes back mapped — then edit directly. Skip the open-ended repo scan.
 
 ## 9. Recipe: add a **CLI command**
 
