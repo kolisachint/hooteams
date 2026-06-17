@@ -81,9 +81,21 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build Windows x64 binary
+        run: bun run build:binary:windows
+
+      - name: Zip Windows x64 binary
+        run: |
+          cd dist/binary
+          zip -r hooteams-windows-x64.zip hooteams-windows-x64
+
       - name: Create GitHub Release
         run: |
           VERSION=$(bun -e "const pkg = require('./packages/bridge/package.json'); console.log(pkg.version)")
-          gh release create "v$VERSION" --title "v$VERSION" --generate-notes
+          gh release create "v$VERSION" --title "v$VERSION" --generate-notes \
+            dist/binary/hooteams-windows-x64.zip
         env:
           GH_TOKEN: ${{ github.token }}

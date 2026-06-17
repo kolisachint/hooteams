@@ -45,3 +45,32 @@ jobs:
 
       - name: Test ${{ matrix.package }}
         run: cd packages/${{ matrix.package }} && bun test
+
+  build-windows:
+    name: Build Windows x64 binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build Windows x64 binary
+        run: bun run build:binary:windows
+
+      - name: Zip Windows x64 binary
+        run: |
+          cd dist/binary
+          zip -r hooteams-windows-x64.zip hooteams-windows-x64
+
+      - name: Upload Windows x64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: hooteams-windows-x64
+          path: dist/binary/hooteams-windows-x64.zip
+          if-no-files-found: error

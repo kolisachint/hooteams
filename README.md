@@ -29,6 +29,23 @@ bun install
 bun test
 ```
 
+### Standalone Windows binary
+
+CI builds a self-contained Windows x64 executable on every push to `main` and
+attaches `hooteams-windows-x64.zip` to each GitHub release. Unzip it and run
+`hooteams.exe` — no Bun or Node install required. The zip ships the executable
+alongside the prebuilt web UI (`webui/dist`) so `hooteams start` serves live
+mission control out of the box.
+
+Build it locally for any platform with:
+
+```bash
+bun run build:binary:windows          # or: bun run build:binary <target>
+# targets: windows-x64 linux-x64 linux-arm64 darwin-x64 darwin-arm64
+```
+
+The staged package lands in `dist/binary/hooteams-<target>/`.
+
 ### Dependencies
 
 This project uses:
