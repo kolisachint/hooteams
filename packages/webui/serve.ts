@@ -1,9 +1,28 @@
 import { existsSync } from "node:fs";
-import { join, normalize, sep } from "node:path";
+import { dirname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Absolute path to the built web UI (produced by `vite build`). */
-export const webuiDist: string = fileURLToPath(new URL("./dist", import.meta.url));
+/**
+ * True when this module is running inside a Bun single-file executable
+ * (`bun build --compile`). The module URL then lives in Bun's virtual
+ * filesystem (`$bunfs` / `~BUN`) rather than on disk, so `./dist` cannot be
+ * resolved relative to it — the built web UI ships next to the executable.
+ */
+const isBunBinary =
+	import.meta.url.includes("$bunfs") ||
+	import.meta.url.includes("~BUN") ||
+	import.meta.url.includes("%7EBUN");
+
+/**
+ * Absolute path to the built web UI (produced by `vite build`).
+ *
+ * - From source / a normal install: `./dist` next to this module.
+ * - From a compiled binary: `webui/dist` next to the executable (the packaged
+ *   zip places it there), since the module path is virtual.
+ */
+export const webuiDist: string = isBunBinary
+	? join(dirname(process.execPath), "webui", "dist")
+	: fileURLToPath(new URL("./dist", import.meta.url));
 
 /** True when the web UI has been built and can be served. */
 export function webuiBuilt(root: string = webuiDist): boolean {

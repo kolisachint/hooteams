@@ -10,6 +10,8 @@
 		"test": "bun test",
 		"check": "tsc --noEmit",
 		"build:webui": "cd packages/webui && bun run build",
+		"build:binary": "bun scripts/build-binary.mjs",
+		"build:binary:windows": "bun scripts/build-binary.mjs windows-x64",
 		"postinstall": "cd apps/cli && npm link",
 		"publish": "bun publish --access public",
 		"version:patch": "bun scripts/bump-versions.mjs patch",
