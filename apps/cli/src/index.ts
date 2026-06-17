@@ -7,7 +7,7 @@ import { attach, nudge, pending, plan, resume, run, status, stop, work } from ".
 const USAGE = `hooteams — multi-agent orchestration for hoocode
 
 Usage:
-  hooteams work   "<goal>" [--config p] [--model id] [--keep] [--out f] [--host …]
+  hooteams work   "<goal>" [--config p] [--model id] [--keep] [--loop] [--out f] [--host …]
                                                            plan + run a goal end-to-end (boots a server if needed)
   hooteams start  [--config path] [--port 4242] [--resume] [--allow-autonomous] [--no-webui]
                                                            start the team server + live web UI
@@ -29,6 +29,9 @@ Options:
   --out      write the dry-run plan to this file (hooteams run accepts it)
   --model    planner model id for hooteams plan/work (default claude-sonnet-4-5)
   --keep     (work) leave the booted server + web UI running after the run
+  --loop     (work) re-plan and re-run until the goal validator verifies it
+  --max-iterations  (work) cap on --loop iterations (default 3)
+  --verify   (work) goal-completion validator prompt for --loop
 `;
 
 const args = process.argv.slice(2);
@@ -58,7 +61,8 @@ try {
 	switch (command) {
 		case "work": {
 			const goal = positional(0);
-			if (!goal) throw new Error('Usage: hooteams work "<goal>" [--config p] [--model id] [--keep] [--detach] [--out f]');
+			if (!goal) throw new Error('Usage: hooteams work "<goal>" [--config p] [--model id] [--keep] [--loop] [--out f]');
+			const maxIterationsFlag = readFlag("max-iterations");
 			await work(host, goal, {
 				config: readFlag("config"),
 				model: readFlag("model"),
@@ -68,6 +72,9 @@ try {
 				allowAutonomous: args.includes("--allow-autonomous"),
 				webui: args.includes("--no-webui") ? false : undefined,
 				out: readFlag("out"),
+				loop: args.includes("--loop"),
+				maxIterations: maxIterationsFlag ? Number(maxIterationsFlag) : undefined,
+				verify: readFlag("verify"),
 			});
 			break;
 		}

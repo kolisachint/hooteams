@@ -72,14 +72,27 @@ If a server is already reachable at `--host`, `work` reuses it; otherwise it boo
 
 | Flag                | Default                | Description                                                        |
 |---------------------|------------------------|--------------------------------------------------------------------|
-| `--config`          | `hooteams.config.json` | Team config used when booting an ephemeral server                  |
+| `--config`          | auto-discovered        | Team config used when booting an ephemeral server                  |
 | `--model`           | `claude-sonnet-4-5`    | Planner model id                                                   |
 | `--keep`            | off                    | Leave the booted server + web UI running after the run            |
+| `--loop`            | off                    | Re-plan and re-run until the goal validator verifies it (see below) |
+| `--max-iterations`  | `3`                    | Cap on `--loop` iterations                                          |
+| `--verify`          | default prompt         | Goal-completion validator prompt used by `--loop`                  |
 | `--out`             | off                    | Also write the plan to this file                                   |
 | `--host`            | `http://localhost:4242`| Reuse a server here instead of booting one                        |
 | `--detach`          | off                    | Submit and exit without following (requires a running server)      |
 | `--allow-autonomous`| off                    | Skip the human-in-the-loop completion gate                         |
 | `--no-webui`        | off                    | Don't serve the web UI when booting a server                       |
+
+#### `--loop` — keep going until verified done
+
+```bash
+hooteams work --loop "implement full test coverage for src/auth"
+```
+
+`--loop` re-plans and re-runs until the goal is **verified**, not merely attempted. Verification reuses the server's goal validator: after each run the validator judges the goal against every task's output and either passes (a clean settle → done) or reports what's missing. On an unmet verdict, `work` feeds that reason into the next iteration's plan and runs again, up to `--max-iterations` (default 3).
+
+Verification needs a validator. When `work --loop` boots a server it injects a default one if the config sets none; pass `--verify "<prompt>"` to supply your own, or set `validator` in the config. (Against a reused `--host` server, looping relies on that server's configured validator.) `--loop` follows every run, so it can't be combined with `--detach`. Exits non-zero if the goal isn't verified within the iteration cap.
 
 ### `hooteams plan`
 
