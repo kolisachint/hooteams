@@ -399,12 +399,13 @@ prompt as project context. Use them for conventions every agent must follow.
 
 const AGENTS_STUB = `# AGENTS.md
 
-Guidance for AI agents working in this project.
+Guidance for AI agents working in this project. This file lives in the rules
+directory, so it is injected into every agent's system prompt.
 
 - Team config: \`.agents/teams/team.json\`
 - Project rules: \`.agents/teams/rules/\`
 
-Run a goal end-to-end with: \`hooteams work "<goal>"\`.
+Describe the project, its conventions, and anything every agent must know.
 `;
 
 export interface InitOptions {
@@ -416,16 +417,17 @@ export interface InitOptions {
 
 /**
  * Scaffold the hooteams conventions into the current project, all under
- * `.agents/teams/`: a discoverable team config, a rules directory, and an
- * AGENTS.md. Existing files are left untouched unless --force, so it's safe to
- * run in an established repo.
+ * `.agents/teams/`: a discoverable team config and a rules directory holding a
+ * starter rule plus an AGENTS.md (both injected into agent prompts via the
+ * rules channel). Existing files are left untouched unless --force, so it's safe
+ * to run in an established repo.
  */
 export async function init(opts: InitOptions = {}): Promise<void> {
 	const cwd = opts.cwd ?? process.cwd();
 	const files: ScaffoldFile[] = [
 		{ path: join(".agents", "teams", "team.json"), content: TEAM_JSON },
 		{ path: join(".agents", "teams", "rules", "00-style.md"), content: STYLE_RULE },
-		{ path: join(".agents", "teams", "AGENTS.md"), content: AGENTS_STUB },
+		{ path: join(".agents", "teams", "rules", "AGENTS.md"), content: AGENTS_STUB },
 	];
 	let wrote = 0;
 	for (const file of files) {

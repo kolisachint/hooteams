@@ -47,7 +47,7 @@ After `bun install` the `hooteams` binary is linked globally (via `npm link` in 
 hooteams — multi-agent orchestration for hoocode
 
 Usage:
-  hooteams init   [--force]                                 scaffold .agents/teams/ (team.json, rules/, AGENTS.md)
+  hooteams init   [--force]                                 scaffold .agents/teams/ (team.json + rules/, incl. AGENTS.md)
   hooteams work   "<goal>" [--config p] [--model id] [--keep] [--loop] [--out f] [--host …]  plan + run a goal end-to-end
   hooteams start  [--config path] [--port 4242] [--resume] [--no-webui]  start the team server + live web UI
   hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
@@ -69,7 +69,7 @@ Scaffold the hooteams conventions into the current project:
 hooteams init
 ```
 
-Everything is created under `.agents/teams/`: `team.json` (a starter planner/coder/reviewer team with categories), `rules/00-style.md` (a starter project rule), and an `AGENTS.md`. Existing files are left untouched — pass `--force` to overwrite. After editing the team config, run a goal with `hooteams work "<goal>"`.
+Everything is created under `.agents/teams/`: `team.json` (a starter planner/coder/reviewer team with categories) and a `rules/` directory holding `00-style.md` and `AGENTS.md`. Both rule files are injected into every agent's system prompt (the rules channel), so `AGENTS.md` guidance actually reaches the agents. Existing files are left untouched — pass `--force` to overwrite. After editing the team config, run a goal with `hooteams work "<goal>"`.
 
 ### `hooteams work`
 

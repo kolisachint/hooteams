@@ -26,12 +26,13 @@ describe("init", () => {
 		expect(teamJson.team[0].category).toBe("plan");
 
 		expect(await Bun.file(join(cwd, ".agents", "teams", "rules", "00-style.md")).text()).toContain("Project rules");
-		expect(await Bun.file(join(cwd, ".agents", "teams", "AGENTS.md")).text()).toContain("AGENTS.md");
+		// AGENTS.md lives in the rules dir so it is injected into prompts
+		expect(await Bun.file(join(cwd, ".agents", "teams", "rules", "AGENTS.md")).text()).toContain("AGENTS.md");
 	});
 
 	test("leaves existing files untouched without --force", async () => {
 		const cwd = project();
-		const agentsPath = join(cwd, ".agents", "teams", "AGENTS.md");
+		const agentsPath = join(cwd, ".agents", "teams", "rules", "AGENTS.md");
 		await Bun.write(agentsPath, "my custom agents file");
 		await init({ cwd });
 		expect(await Bun.file(agentsPath).text()).toBe("my custom agents file");
@@ -41,7 +42,7 @@ describe("init", () => {
 
 	test("overwrites with --force", async () => {
 		const cwd = project();
-		const agentsPath = join(cwd, ".agents", "teams", "AGENTS.md");
+		const agentsPath = join(cwd, ".agents", "teams", "rules", "AGENTS.md");
 		await Bun.write(agentsPath, "stale");
 		await init({ cwd, force: true });
 		expect(await Bun.file(agentsPath).text()).toContain("Guidance for AI agents");
