@@ -2,11 +2,12 @@
 import { loadConfig, startServer } from "@kolisachint/hooteams-server";
 import pkg from "../package.json" with { type: "json" };
 import { banner } from "./banner.js";
-import { attach, nudge, pending, plan, resume, run, status, stop, work } from "./commands.js";
+import { attach, init, nudge, pending, plan, resume, run, status, stop, work } from "./commands.js";
 
 const USAGE = `hooteams — multi-agent orchestration for hoocode
 
 Usage:
+  hooteams init   [--force]                                 scaffold .agents/teams/team.json, .hooteams/rules/, AGENTS.md
   hooteams work   "<goal>" [--config p] [--model id] [--keep] [--loop] [--out f] [--host …]
                                                            plan + run a goal end-to-end (boots a server if needed)
   hooteams start  [--config path] [--port 4242] [--resume] [--allow-autonomous] [--no-webui]
@@ -59,6 +60,9 @@ const host = readFlag("host", "http://localhost:4242")!.replace(/\/+$/, "");
 
 try {
 	switch (command) {
+		case "init":
+			await init({ force: args.includes("--force") });
+			break;
 		case "work": {
 			const goal = positional(0);
 			if (!goal) throw new Error('Usage: hooteams work "<goal>" [--config p] [--model id] [--keep] [--loop] [--out f]');

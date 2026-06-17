@@ -1,6 +1,7 @@
 import { createHoocodeAuth, getModel, Planner, type RoleConfig, Team, TeamChannel } from "@kolisachint/hooteams-orchestrator";
 import { loadConfig, type RunningServer, startServer } from "@kolisachint/hooteams-server";
 import { createInterface } from "node:readline/promises";
+import { join } from "node:path";
 import { StreamRenderer } from "./render.js";
 import { consumeSSE } from "./sse.js";
 
@@ -363,6 +364,84 @@ async function serverReachable(host: string): Promise<boolean> {
 
 function formatRole(role: { role: string; category?: string }): string {
 	return role.category ? `${role.role} (${role.category})` : role.role;
+}
+
+/** A scaffold file `hooteams init` writes (path is relative to the project root). */
+interface ScaffoldFile {
+	path: string;
+	content: string;
+}
+
+const TEAM_JSON = `${JSON.stringify(
+	{
+		defaults: { provider: "anthropic", model: "claude-sonnet-4-5" },
+		maxConcurrent: 3,
+		rulesDir: ".hooteams/rules",
+		team: [
+			{ role: "planner", category: "plan", systemPrompt: "You are the planner. Break the goal into tasks and coordinate the team." },
+			{ role: "coder", category: "deep", defaultTools: true, systemPrompt: "You are the coder. Implement tasks one at a time, with tests." },
+			{ role: "reviewer", category: "quick", defaultTools: true, systemPrompt: "You are the reviewer. Check the work against the goal and flag gaps." },
+		],
+	},
+	null,
+	"\t",
+)}\n`;
+
+const STYLE_RULE = `# Project rules
+
+Markdown files in \`.hooteams/rules/\` are injected into every agent's system
+prompt as project context. Use them for conventions every agent must follow.
+
+- Match the existing code style.
+- Write tests for new behavior.
+- Keep changes focused; don't refactor unrelated code.
+`;
+
+const AGENTS_STUB = `# AGENTS.md
+
+Guidance for AI agents working in this project.
+
+- Team config: \`.agents/teams/team.json\`
+- Project rules: \`.hooteams/rules/\`
+
+Run a goal end-to-end with: \`hooteams work "<goal>"\`.
+`;
+
+export interface InitOptions {
+	/** Overwrite files that already exist. Default: skip them. */
+	force?: boolean;
+	/** Project root to scaffold into. Defaults to process.cwd(). */
+	cwd?: string;
+}
+
+/**
+ * Scaffold the hooteams conventions into the current project: a discoverable
+ * team config, a rules directory, and an AGENTS.md stub. Existing files are left
+ * untouched unless --force, so it's safe to run in an established repo.
+ */
+export async function init(opts: InitOptions = {}): Promise<void> {
+	const cwd = opts.cwd ?? process.cwd();
+	const files: ScaffoldFile[] = [
+		{ path: join(".agents", "teams", "team.json"), content: TEAM_JSON },
+		{ path: join(".hooteams", "rules", "00-style.md"), content: STYLE_RULE },
+		{ path: "AGENTS.md", content: AGENTS_STUB },
+	];
+	let wrote = 0;
+	for (const file of files) {
+		const exists = await Bun.file(join(cwd, file.path)).exists();
+		if (exists && !opts.force) {
+			console.log(`skip   ${file.path} (exists)`);
+			continue;
+		}
+		await Bun.write(join(cwd, file.path), file.content); // creates parent dirs
+		console.log(`${exists ? "overwrote" : "created"}  ${file.path}`);
+		wrote++;
+	}
+	console.log(
+		wrote > 0
+			? `\nScaffolded ${wrote} file(s). Edit .agents/teams/team.json, then: hooteams work "<goal>"`
+			: "\nNothing to do — all scaffold files already exist (use --force to overwrite).",
+	);
 }
 
 /** List the active run's unanswered approval gates. */

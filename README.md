@@ -47,7 +47,8 @@ After `bun install` the `hooteams` binary is linked globally (via `npm link` in 
 hooteams — multi-agent orchestration for hoocode
 
 Usage:
-  hooteams work   "<goal>" [--config p] [--model id] [--keep] [--out f] [--host …]  plan + run a goal end-to-end
+  hooteams init   [--force]                                 scaffold .agents/teams/team.json, .hooteams/rules/, AGENTS.md
+  hooteams work   "<goal>" [--config p] [--model id] [--keep] [--loop] [--out f] [--host …]  plan + run a goal end-to-end
   hooteams start  [--config path] [--port 4242] [--resume] [--no-webui]  start the team server + live web UI
   hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
   hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
@@ -59,6 +60,16 @@ Usage:
   hooteams stop   [--host …]                                stop the server gracefully
   hooteams help                                             show usage
 ```
+
+### `hooteams init`
+
+Scaffold the hooteams conventions into the current project:
+
+```bash
+hooteams init
+```
+
+Creates `.agents/teams/team.json` (a starter planner/coder/reviewer team with categories), `.hooteams/rules/00-style.md` (a starter project rule), and an `AGENTS.md` stub. Existing files are left untouched — pass `--force` to overwrite. After editing the team config, run a goal with `hooteams work "<goal>"`.
 
 ### `hooteams work`
 
