@@ -29,6 +29,7 @@ export {
 	createPlanDelegateTaskTool,
 	createPlanSpawnAgentTool,
 	createSpawnAgentTool,
+	formatRoster,
 	Planner,
 	PLANNER_ROLE,
 } from "./planner.js";

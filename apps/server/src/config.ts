@@ -1,4 +1,5 @@
 import type { RoleConfig, ThinkingLevel } from "@kolisachint/hooteams-orchestrator";
+import { join } from "node:path";
 
 /** Team-wide fallbacks applied to roles that don't set their own. */
 export interface ConfigDefaults {
@@ -78,17 +79,33 @@ export interface RawServerConfig {
  * A missing default config yields an empty team (agents get spawned by the
  * planner or via the API instead).
  */
+/**
+ * Default config locations, in discovery order, when no explicit path is given:
+ * the conventional `.agents/teams/team.json`, then the legacy
+ * `hooteams.config.json` in cwd.
+ */
+export const DEFAULT_CONFIG_PATHS = [join(".agents", "teams", "team.json"), "hooteams.config.json"];
+
+/**
+ * Load a team config. An explicit `path` wins (and must exist); otherwise the
+ * DEFAULT_CONFIG_PATHS are tried in order. When none exist the team is empty
+ * (agents get spawned by the planner or via the API instead).
+ */
 export async function loadConfig(path?: string): Promise<ServerConfig> {
-	const configPath = path ?? "hooteams.config.json";
-	const file = Bun.file(configPath);
-	if (!(await file.exists())) {
-		if (path) {
+	if (path) {
+		const file = Bun.file(path);
+		if (!(await file.exists())) {
 			throw new Error(`Config file not found: ${path}`);
 		}
-		return { team: [] };
+		return validateConfig((await file.json()) as RawServerConfig, path);
 	}
-	const raw = (await file.json()) as RawServerConfig;
-	return validateConfig(raw, configPath);
+	for (const candidate of DEFAULT_CONFIG_PATHS) {
+		const file = Bun.file(candidate);
+		if (await file.exists()) {
+			return validateConfig((await file.json()) as RawServerConfig, candidate);
+		}
+	}
+	return { team: [] };
 }
 
 export function validateConfig(raw: RawServerConfig, source: string): ServerConfig {

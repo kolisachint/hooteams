@@ -111,7 +111,7 @@ hooteams start --config hooteams.config.json --port 4242
 
 | Flag         | Default                 | Description                                     |
 |--------------|-------------------------|-------------------------------------------------|
-| `--config`   | `hooteams.config.json`  | Path to config file. Missing default → empty team (agents spawned via planner or API) |
+| `--config`   | auto-discovered         | Path to config file. Default: `.agents/teams/team.json` → `hooteams.config.json`; none → empty team |
 | `--port`     | `4242`                  | HTTP port for the API/SSE bridge **and** the web UI |
 | `--resume`   | off                     | Restore and continue the newest interrupted run from session storage |
 | `--no-webui` | off                     | Do not serve the web UI (run API only)          |
@@ -239,7 +239,9 @@ hooteams stop --host http://remote:4242
 
 ## Configuration
 
-The server reads `hooteams.config.json` (or the path given via `--config`). If the default file is missing, the server starts with an empty team — agents are spawned dynamically by the planner or via the `/steer` API.
+The server reads a team config discovered in this order (an explicit `--config` path always wins and must exist): `.agents/teams/team.json`, then `hooteams.config.json` in the current directory. Both use the same schema below. If none is found, the server starts with an empty team — agents are spawned dynamically by the planner or via the `/steer` API.
+
+When a config defines a team, `hooteams plan`/`work` feed that roster — each role's `category`, model, and one-line brief — to the planner, so it routes tasks to the right existing agent (matching by category tier, e.g. `plan`/`deep`/`quick`) instead of spawning new ones blind.
 
 ### Full config reference
 
@@ -327,7 +329,7 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
 | `defaultTools`  | `boolean`  |          | `false`           | Give the agent hoocode's built-in coding tools (`bash`, `read`, `edit`, `write`, `grep`, `find`, `ls`) |
 | `mcpConfigPath` | `string`   |          |                   | Path to an `mcp.json` file; MCP server tools are loaded and appended to the agent's tool set     |
 | `cwd`           | `string`   |          | `process.cwd()`   | Working directory for the agent's tools                                                          |
-| `category`      | `string`   |          |                   | Optional grouping label (e.g. `deep`, `quick`); cosmetic today                                   |
+| `category`      | `string`   |          |                   | Capability tier (e.g. `plan`, `deep`, `quick`); fed to the planner so it routes tasks by tier    |
 | `appendSystemPrompt` | `string` |       |                   | Appendix injected after the role prompt (before project context)                                |
 | `promptGuidelines` | `string[]` |      |                   | Extra guideline bullets added to hoocode's tool-aware guidelines                                 |
 | `skillPaths`    | `string[]` |          |                   | Extra skill directories beyond hoocode's defaults                                                |

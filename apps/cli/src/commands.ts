@@ -137,7 +137,16 @@ export async function plan(goal: string, outFile?: string, modelId?: string, pro
  * graph ({ goal, roles, tasks }), or null when it produces no tasks. Planning
  * needs no server — spawn_agent/delegate_task only record the plan.
  */
-export async function runPlanner(goal: string, modelId?: string, provider?: string): Promise<PlanDocument | null> {
+export async function runPlanner(goal: string, modelId?: string, provider?: string, configPath?: string): Promise<PlanDocument | null> {
+	// The configured team (with categories) is fed to the planner as a roster so
+	// it routes tasks to the right agent tier. Config problems shouldn't block
+	// planning, so a load failure just means no roster.
+	let availableRoles: RoleConfig[] = [];
+	try {
+		availableRoles = (await loadConfig(configPath)).team;
+	} catch (error) {
+		console.error(`(planner) ignoring team config: ${error instanceof Error ? error.message : String(error)}`);
+	}
 	const channel = new TeamChannel();
 	const getApiKey = createHoocodeAuth();
 	const team = new Team(channel, { getApiKey });
@@ -147,6 +156,7 @@ export async function runPlanner(goal: string, modelId?: string, provider?: stri
 		team,
 		dryRun: true,
 		getApiKey,
+		availableRoles,
 		model: modelId ? getModel((provider ?? "anthropic") as any, modelId as any) : undefined,
 	});
 	await planner.plan(goal);
@@ -207,7 +217,7 @@ export async function work(host: string, goal: string, opts: WorkOptions = {}): 
 
 	let failed = false;
 	try {
-		const document = await runPlanner(goal, opts.model, opts.provider);
+		const document = await runPlanner(goal, opts.model, opts.provider, opts.config);
 		if (!document) {
 			console.log("\nthe planner produced no tasks");
 		} else {
