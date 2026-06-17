@@ -104,6 +104,21 @@ describe("createNodeHarnessFactory", () => {
 		expect(events).toContain("agent_end");
 	});
 
+	test("injects project rules into the role's system prompt", async () => {
+		const calls: Array<{ systemPrompt: string; messages: unknown[] }> = [];
+		const factory = createNodeHarnessFactory({
+			roles,
+			runId: "run-rules",
+			sessionsRoot,
+			resolveModel: () => fakeModel,
+			streamFn: echoStreamFn(calls),
+			rules: [{ path: ".hooteams/rules/style.md", content: "ALWAYS_USE_TABS" }],
+		});
+		const handle = await factory(node("deploy", "ops"));
+		await handle.harness.prompt("go");
+		expect(calls[0]!.systemPrompt).toContain("ALWAYS_USE_TABS");
+	});
+
 	test("reopens the node's session on a second dispatch so the conversation survives", async () => {
 		const calls: Array<{ systemPrompt: string; messages: unknown[] }> = [];
 		const options = {

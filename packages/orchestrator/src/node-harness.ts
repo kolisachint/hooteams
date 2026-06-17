@@ -12,6 +12,7 @@ import { getModel, type Model } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
 import { createBoardTools, createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import { createAskAgentTool, createDelegateTaskTool } from "./planner.js";
+import { buildRoleSystemPrompt } from "./role-prompt.js";
 import type { Team } from "./team.js";
 import { extractMessageText, type NodeHandle } from "./team-orchestrator.js";
 import type { AgentEvent, AgentMessage, RoleConfig, TaskNode } from "./types.js";
@@ -103,6 +104,11 @@ export interface NodeHarnessFactoryOptions {
 	team?: Team;
 	/** Project-scoped shared memory. When provided, agents get the memory_read and memory_write tools. */
 	memory?: TeamMemory;
+	/**
+	 * Project rules (e.g. `.hooteams/rules/**`) injected into every role's system
+	 * prompt as extra context files, after hoocode's discovered project context.
+	 */
+	rules?: Array<{ path: string; content: string }>;
 }
 
 /** Deterministic node session id, so resuming a restored node reopens its conversation. */
@@ -147,6 +153,7 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 			throw new Error(`Unknown model "${config.model}" for provider "${config.provider ?? "anthropic"}"`);
 		}
 		const cwd = config.cwd ?? process.cwd();
+		const env = new NodeExecutionEnv({ cwd });
 		const session = await openOrCreateSession(repo, nodeSessionId(options.runId, node.id), cwd);
 		const tools = [...(config.defaultTools ? getDefaultTools({ cwd: config.cwd }) : []), ...(config.tools ?? [])];
 		if (config.mcpConfigPath) {
@@ -165,13 +172,26 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 			tools.push(createMemoryWriteTool(options.memory, { runId: options.runId, role: node.role }));
 			tools.push(...createBoardTools(options.memory, { runId: options.runId, role: node.role }));
 		}
+		// Enrich the role's prompt with hoocode's own machinery: ride the role
+		// identity on hoocode's coding base (so it gets the tools list + guidelines)
+		// and fold in project context + skills loaded from its cwd, then append
+		// hooteams' HITL protocol marker.
+		const systemPrompt = `${buildRoleSystemPrompt({
+			basePrompt: config.systemPrompt,
+			appendSystemPrompt: config.appendSystemPrompt,
+			promptGuidelines: config.promptGuidelines,
+			skillPaths: config.skillPaths,
+			extraContextFiles: options.rules,
+			tools,
+			cwd,
+		})}\n\n${HITL_SYSTEM_PROMPT}`;
 		const harness = new AgentHarness({
-			env: new NodeExecutionEnv({ cwd }),
+			env,
 			session,
 			model,
 			thinkingLevel: config.thinkingLevel,
 			tools,
-			systemPrompt: `${config.systemPrompt}\n\n${HITL_SYSTEM_PROMPT}`,
+			systemPrompt,
 			getApiKeyAndHeaders,
 		});
 		if (options.streamFn) {

@@ -47,6 +47,8 @@ After `bun install` the `hooteams` binary is linked globally (via `npm link` in 
 hooteams — multi-agent orchestration for hoocode
 
 Usage:
+  hooteams init   [--force]                                 scaffold .agents/teams/ (team.json + rules/, incl. AGENTS.md)
+  hooteams work   "<goal>" [--config p] [--model id] [--keep] [--loop] [--out f] [--host …]  plan + run a goal end-to-end
   hooteams start  [--config path] [--port 4242] [--resume] [--no-webui]  start the team server + live web UI
   hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
   hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
@@ -58,6 +60,50 @@ Usage:
   hooteams stop   [--host …]                                stop the server gracefully
   hooteams help                                             show usage
 ```
+
+### `hooteams init`
+
+Scaffold the hooteams conventions into the current project:
+
+```bash
+hooteams init
+```
+
+Everything is created under `.agents/teams/`: `team.json` (a starter planner/coder/reviewer team with categories) and a `rules/` directory holding `00-style.md` and `AGENTS.md`. Both rule files are injected into every agent's system prompt (the rules channel), so `AGENTS.md` guidance actually reaches the agents. Existing files are left untouched — pass `--force` to overwrite. After editing the team config, run a goal with `hooteams work "<goal>"`.
+
+### `hooteams work`
+
+The one-liner: plan a goal, make sure a server is running, submit the plan, and follow it to completion — no separate `start` then `run`.
+
+```bash
+hooteams work "build the auth module"
+```
+
+If a server is already reachable at `--host`, `work` reuses it; otherwise it boots an ephemeral in-process server (and the live web UI) for the duration and stops it when the run settles. Pass `--keep` to leave that server (and the UI) running afterward. This is the decomposed `plan` → `run` flow collapsed into one command; the individual commands remain for when you want to review the plan or drive an existing server.
+
+| Flag                | Default                | Description                                                        |
+|---------------------|------------------------|--------------------------------------------------------------------|
+| `--config`          | auto-discovered        | Team config used when booting an ephemeral server                  |
+| `--model`           | `claude-sonnet-4-5`    | Planner model id                                                   |
+| `--keep`            | off                    | Leave the booted server + web UI running after the run            |
+| `--loop`            | off                    | Re-plan and re-run until the goal validator verifies it (see below) |
+| `--max-iterations`  | `3`                    | Cap on `--loop` iterations                                          |
+| `--verify`          | default prompt         | Goal-completion validator prompt used by `--loop`                  |
+| `--out`             | off                    | Also write the plan to this file                                   |
+| `--host`            | `http://localhost:4242`| Reuse a server here instead of booting one                        |
+| `--detach`          | off                    | Submit and exit without following (requires a running server)      |
+| `--allow-autonomous`| off                    | Skip the human-in-the-loop completion gate                         |
+| `--no-webui`        | off                    | Don't serve the web UI when booting a server                       |
+
+#### `--loop` — keep going until verified done
+
+```bash
+hooteams work --loop "implement full test coverage for src/auth"
+```
+
+`--loop` re-plans and re-runs until the goal is **verified**, not merely attempted. Verification reuses the server's goal validator: after each run the validator judges the goal against every task's output and either passes (a clean settle → done) or reports what's missing. On an unmet verdict, `work` feeds that reason into the next iteration's plan and runs again, up to `--max-iterations` (default 3).
+
+Verification needs a validator. When `work --loop` boots a server it injects a default one if the config sets none; pass `--verify "<prompt>"` to supply your own, or set `validator` in the config. (Against a reused `--host` server, looping relies on that server's configured validator.) `--loop` follows every run, so it can't be combined with `--detach`. Exits non-zero if the goal isn't verified within the iteration cap.
 
 ### `hooteams plan`
 
@@ -89,7 +135,7 @@ hooteams start --config hooteams.config.json --port 4242
 
 | Flag         | Default                 | Description                                     |
 |--------------|-------------------------|-------------------------------------------------|
-| `--config`   | `hooteams.config.json`  | Path to config file. Missing default → empty team (agents spawned via planner or API) |
+| `--config`   | auto-discovered         | Path to config file. Default: `.agents/teams/team.json` → `hooteams.config.json`; none → empty team |
 | `--port`     | `4242`                  | HTTP port for the API/SSE bridge **and** the web UI |
 | `--resume`   | off                     | Restore and continue the newest interrupted run from session storage |
 | `--no-webui` | off                     | Do not serve the web UI (run API only)          |
@@ -217,7 +263,9 @@ hooteams stop --host http://remote:4242
 
 ## Configuration
 
-The server reads `hooteams.config.json` (or the path given via `--config`). If the default file is missing, the server starts with an empty team — agents are spawned dynamically by the planner or via the `/steer` API.
+The server reads a team config discovered in this order (an explicit `--config` path always wins and must exist): `.agents/teams/team.json`, then `hooteams.config.json` in the current directory. Both use the same schema below. If none is found, the server starts with an empty team — agents are spawned dynamically by the planner or via the `/steer` API.
+
+When a config defines a team, `hooteams plan`/`work` feed that roster — each role's `category`, model, and one-line brief — to the planner, so it routes tasks to the right existing agent (matching by category tier, e.g. `plan`/`deep`/`quick`) instead of spawning new ones blind.
 
 ### Full config reference
 
@@ -240,7 +288,10 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
       "thinkingLevel": "off",                           // "off" | "low" | "medium" | "high" (falls back to defaults.thinkingLevel, then "off")
       "defaultTools": true,                             // include built-in coding tools: bash/read/edit/write/grep/find/ls
       "mcpConfigPath": "./mcp.json",                    // path to mcp.json for MCP server tools (requires async spawn)
-      "cwd": "/path/to/project"                         // working directory for agent tools (default: process.cwd())
+      "cwd": "/path/to/project",                        // working directory for agent tools (default: process.cwd())
+      "category": "deep",                               // optional grouping label (cosmetic today)
+      "appendSystemPrompt": "Focus on safety.",         // optional appendix after the role prompt
+      "skillPaths": ["./skills"]                        // extra skill directories beyond hoocode's defaults
     },
     {
       "role": "coder",
@@ -253,6 +304,12 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
 
   // Max agents that can run concurrently
   "maxConcurrent": 3,
+
+  // Directory of project rule files (*.md, searched recursively) injected into
+  // every role's system prompt as extra context (default: ".agents/teams/rules";
+  // a missing directory is ignored). This is hooteams' own rule channel, added
+  // after the project context hoocode discovers (AGENTS.md, CLAUDE.md, …).
+  "rulesDir": ".agents/teams/rules",
 
   // Server port (can also be set via --port flag or PORT env var)
   "port": 4242,
@@ -296,6 +353,10 @@ The server reads `hooteams.config.json` (or the path given via `--config`). If t
 | `defaultTools`  | `boolean`  |          | `false`           | Give the agent hoocode's built-in coding tools (`bash`, `read`, `edit`, `write`, `grep`, `find`, `ls`) |
 | `mcpConfigPath` | `string`   |          |                   | Path to an `mcp.json` file; MCP server tools are loaded and appended to the agent's tool set     |
 | `cwd`           | `string`   |          | `process.cwd()`   | Working directory for the agent's tools                                                          |
+| `category`      | `string`   |          |                   | Capability tier (e.g. `plan`, `deep`, `quick`); fed to the planner so it routes tasks by tier    |
+| `appendSystemPrompt` | `string` |       |                   | Appendix injected after the role prompt (before project context)                                |
+| `promptGuidelines` | `string[]` |      |                   | Extra guideline bullets added to hoocode's tool-aware guidelines                                 |
+| `skillPaths`    | `string[]` |          |                   | Extra skill directories beyond hoocode's defaults                                                |
 
 ### Minimal config example
 

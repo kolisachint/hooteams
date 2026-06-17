@@ -367,6 +367,13 @@ export interface PlannerOptions {
 	 */
 	memory?: TeamMemory;
 	/**
+	 * The team's configured roles. When provided, a roster (each role's
+	 * category, model, and one-line brief) is appended to the planner prompt so
+	 * it routes tasks to the right existing agent by category instead of
+	 * spawning new ones blind.
+	 */
+	availableRoles?: RoleConfig[];
+	/**
 	 * Plan without executing: spawn_agent and delegate_task write to
 	 * `planBuffer` instead of touching the team, so the plan can be inspected
 	 * (and run later via tasks.json / POST /runs) before any agent starts.
@@ -391,6 +398,32 @@ You are in planning mode: spawn_agent and delegate_task record a plan instead of
 agents — nothing executes. Cover the whole goal. Give every agent a taskId, a concrete
 task, and deps listing the task ids whose results it needs; add retries for tasks likely
 to be flaky. When the plan covers the goal, summarize it briefly and stop.`;
+
+/**
+ * Render the configured team as a roster the planner can route by. Categories
+ * (e.g. "plan", "deep", "quick") let it match a task to the right agent tier
+ * without the user choosing one.
+ */
+export function formatRoster(roles: RoleConfig[]): string {
+	if (roles.length === 0) return "";
+	const lines = roles.map((role) => {
+		const category = role.category ? ` [${role.category}]` : "";
+		const model = role.model ? ` (${role.model})` : "";
+		const brief = firstLine(role.systemPrompt);
+		return `- ${role.role}${category}${model}${brief ? `: ${brief}` : ""}`;
+	});
+	return (
+		"\n\nYour team already has these agents — prefer delegating to them (match the task to an agent's " +
+		'category, e.g. "plan" for planning, "deep" for complex implementation, "quick" for small/cheap tasks) ' +
+		`instead of spawning new ones when one fits:\n${lines.join("\n")}`
+	);
+}
+
+/** First line of a system prompt, trimmed, for the roster listing. */
+function firstLine(text: string): string {
+	const line = text.trim().split("\n", 1)[0] ?? "";
+	return line.length > 120 ? `${line.slice(0, 117)}…` : line;
+}
 
 export const PLANNER_ROLE = "planner";
 
@@ -418,9 +451,11 @@ export class Planner {
 		if (!options.dryRun && options.memory) {
 			teamTools.push(createMemoryReadTool(options.memory), createMemoryWriteTool(options.memory, { role: PLANNER_ROLE }));
 		}
+		const roster = formatRoster(options.availableRoles ?? []);
 		this.agent = new Agent({
 			initialState: {
-				systemPrompt: (options.systemPrompt ?? DEFAULT_PLANNER_PROMPT) + (options.dryRun ? DRY_RUN_ADDENDUM : ""),
+				systemPrompt:
+					(options.systemPrompt ?? DEFAULT_PLANNER_PROMPT) + roster + (options.dryRun ? DRY_RUN_ADDENDUM : ""),
 				model,
 				thinkingLevel: options.thinkingLevel ?? "off",
 				tools: [...teamTools, ...(options.tools ?? [])],

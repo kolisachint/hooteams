@@ -24,6 +24,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_PORT, type ServerConfig } from "./config.js";
+import { loadRules } from "./rules.js";
 
 export interface RunningServer {
 	server: ReturnType<typeof Bun.serve>;
@@ -77,6 +78,9 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 	// HITL is the product default: the completion gate is active unless the CLI
 	// flag or config opts into autonomous runs (CLI wins over config).
 	const allowAutonomous = options.allowAutonomous ?? config.allowAutonomous ?? false;
+	// Project rules (.agents/teams/rules/** by default) injected into every role's
+	// prompt as extra context. Loaded once at startup against the server's cwd.
+	const rules = loadRules(process.cwd(), config.rulesDir ?? ".agents/teams/rules");
 	const sessionsRoot = options.sessionsRoot ?? config.sessionsRoot ?? join(homedir(), ".hooteams", "sessions");
 	const repo = new JsonlSessionRepo({ sessionsRoot });
 	// Cross-run shared memory, scoped to the project (not the run): task
@@ -161,6 +165,7 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 				streamFn: teamOptions.streamFn,
 				team, // Pass team to enable the delegate_task/ask_agent messaging tools
 				memory, // Pass shared memory to enable the memory_read/memory_write tools
+				rules, // Inject .hooteams/rules/** into every role's system prompt
 			}),
 			taskPrompt: (node: { id: string }) => prompts.get(node.id) ?? node.id,
 			allowAutonomous,
