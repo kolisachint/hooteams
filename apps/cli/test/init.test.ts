@@ -22,16 +22,16 @@ describe("init", () => {
 
 		const teamJson = await Bun.file(join(cwd, ".agents", "teams", "team.json")).json();
 		expect(teamJson.team.map((r: { role: string }) => r.role)).toEqual(["planner", "coder", "reviewer"]);
-		expect(teamJson.rulesDir).toBe(".hooteams/rules");
+		expect(teamJson.rulesDir).toBe(".agents/teams/rules");
 		expect(teamJson.team[0].category).toBe("plan");
 
-		expect(await Bun.file(join(cwd, ".hooteams", "rules", "00-style.md")).text()).toContain("Project rules");
-		expect(await Bun.file(join(cwd, "AGENTS.md")).text()).toContain("AGENTS.md");
+		expect(await Bun.file(join(cwd, ".agents", "teams", "rules", "00-style.md")).text()).toContain("Project rules");
+		expect(await Bun.file(join(cwd, ".agents", "teams", "AGENTS.md")).text()).toContain("AGENTS.md");
 	});
 
 	test("leaves existing files untouched without --force", async () => {
 		const cwd = project();
-		const agentsPath = join(cwd, "AGENTS.md");
+		const agentsPath = join(cwd, ".agents", "teams", "AGENTS.md");
 		await Bun.write(agentsPath, "my custom agents file");
 		await init({ cwd });
 		expect(await Bun.file(agentsPath).text()).toBe("my custom agents file");
@@ -41,7 +41,7 @@ describe("init", () => {
 
 	test("overwrites with --force", async () => {
 		const cwd = project();
-		const agentsPath = join(cwd, "AGENTS.md");
+		const agentsPath = join(cwd, ".agents", "teams", "AGENTS.md");
 		await Bun.write(agentsPath, "stale");
 		await init({ cwd, force: true });
 		expect(await Bun.file(agentsPath).text()).toContain("Guidance for AI agents");

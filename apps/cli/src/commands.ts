@@ -376,7 +376,7 @@ const TEAM_JSON = `${JSON.stringify(
 	{
 		defaults: { provider: "anthropic", model: "claude-sonnet-4-5" },
 		maxConcurrent: 3,
-		rulesDir: ".hooteams/rules",
+		rulesDir: ".agents/teams/rules",
 		team: [
 			{ role: "planner", category: "plan", systemPrompt: "You are the planner. Break the goal into tasks and coordinate the team." },
 			{ role: "coder", category: "deep", defaultTools: true, systemPrompt: "You are the coder. Implement tasks one at a time, with tests." },
@@ -389,7 +389,7 @@ const TEAM_JSON = `${JSON.stringify(
 
 const STYLE_RULE = `# Project rules
 
-Markdown files in \`.hooteams/rules/\` are injected into every agent's system
+Markdown files in \`.agents/teams/rules/\` are injected into every agent's system
 prompt as project context. Use them for conventions every agent must follow.
 
 - Match the existing code style.
@@ -402,7 +402,7 @@ const AGENTS_STUB = `# AGENTS.md
 Guidance for AI agents working in this project.
 
 - Team config: \`.agents/teams/team.json\`
-- Project rules: \`.hooteams/rules/\`
+- Project rules: \`.agents/teams/rules/\`
 
 Run a goal end-to-end with: \`hooteams work "<goal>"\`.
 `;
@@ -415,16 +415,17 @@ export interface InitOptions {
 }
 
 /**
- * Scaffold the hooteams conventions into the current project: a discoverable
- * team config, a rules directory, and an AGENTS.md stub. Existing files are left
- * untouched unless --force, so it's safe to run in an established repo.
+ * Scaffold the hooteams conventions into the current project, all under
+ * `.agents/teams/`: a discoverable team config, a rules directory, and an
+ * AGENTS.md. Existing files are left untouched unless --force, so it's safe to
+ * run in an established repo.
  */
 export async function init(opts: InitOptions = {}): Promise<void> {
 	const cwd = opts.cwd ?? process.cwd();
 	const files: ScaffoldFile[] = [
 		{ path: join(".agents", "teams", "team.json"), content: TEAM_JSON },
-		{ path: join(".hooteams", "rules", "00-style.md"), content: STYLE_RULE },
-		{ path: "AGENTS.md", content: AGENTS_STUB },
+		{ path: join(".agents", "teams", "rules", "00-style.md"), content: STYLE_RULE },
+		{ path: join(".agents", "teams", "AGENTS.md"), content: AGENTS_STUB },
 	];
 	let wrote = 0;
 	for (const file of files) {

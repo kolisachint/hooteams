@@ -47,7 +47,7 @@ After `bun install` the `hooteams` binary is linked globally (via `npm link` in 
 hooteams — multi-agent orchestration for hoocode
 
 Usage:
-  hooteams init   [--force]                                 scaffold .agents/teams/team.json, .hooteams/rules/, AGENTS.md
+  hooteams init   [--force]                                 scaffold .agents/teams/ (team.json, rules/, AGENTS.md)
   hooteams work   "<goal>" [--config p] [--model id] [--keep] [--loop] [--out f] [--host …]  plan + run a goal end-to-end
   hooteams start  [--config path] [--port 4242] [--resume] [--no-webui]  start the team server + live web UI
   hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
@@ -69,7 +69,7 @@ Scaffold the hooteams conventions into the current project:
 hooteams init
 ```
 
-Creates `.agents/teams/team.json` (a starter planner/coder/reviewer team with categories), `.hooteams/rules/00-style.md` (a starter project rule), and an `AGENTS.md` stub. Existing files are left untouched — pass `--force` to overwrite. After editing the team config, run a goal with `hooteams work "<goal>"`.
+Everything is created under `.agents/teams/`: `team.json` (a starter planner/coder/reviewer team with categories), `rules/00-style.md` (a starter project rule), and an `AGENTS.md`. Existing files are left untouched — pass `--force` to overwrite. After editing the team config, run a goal with `hooteams work "<goal>"`.
 
 ### `hooteams work`
 
@@ -306,10 +306,10 @@ When a config defines a team, `hooteams plan`/`work` feed that roster — each r
   "maxConcurrent": 3,
 
   // Directory of project rule files (*.md, searched recursively) injected into
-  // every role's system prompt as extra context (default: ".hooteams/rules";
+  // every role's system prompt as extra context (default: ".agents/teams/rules";
   // a missing directory is ignored). This is hooteams' own rule channel, added
   // after the project context hoocode discovers (AGENTS.md, CLAUDE.md, …).
-  "rulesDir": ".hooteams/rules",
+  "rulesDir": ".agents/teams/rules",
 
   // Server port (can also be set via --port flag or PORT env var)
   "port": 4242,

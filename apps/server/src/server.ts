@@ -78,9 +78,9 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 	// HITL is the product default: the completion gate is active unless the CLI
 	// flag or config opts into autonomous runs (CLI wins over config).
 	const allowAutonomous = options.allowAutonomous ?? config.allowAutonomous ?? false;
-	// Project rules (.hooteams/rules/** by default) injected into every role's
+	// Project rules (.agents/teams/rules/** by default) injected into every role's
 	// prompt as extra context. Loaded once at startup against the server's cwd.
-	const rules = loadRules(process.cwd(), config.rulesDir ?? ".hooteams/rules");
+	const rules = loadRules(process.cwd(), config.rulesDir ?? ".agents/teams/rules");
 	const sessionsRoot = options.sessionsRoot ?? config.sessionsRoot ?? join(homedir(), ".hooteams", "sessions");
 	const repo = new JsonlSessionRepo({ sessionsRoot });
 	// Cross-run shared memory, scoped to the project (not the run): task

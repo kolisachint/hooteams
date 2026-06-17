@@ -46,7 +46,7 @@ export interface ServerConfig {
 	webuiRoot?: string;
 	/**
 	 * Directory of project rule files (`*.md`, searched recursively) injected into
-	 * every role's system prompt as extra context. Defaults to `.hooteams/rules`;
+	 * every role's system prompt as extra context. Defaults to `.agents/teams/rules`;
 	 * a missing directory is simply ignored.
 	 */
 	rulesDir?: string;
