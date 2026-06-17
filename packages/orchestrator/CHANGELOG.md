@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.25] - 2026-06-17
 
 ### Added
 - Role system prompts are now built with hoocode's own machinery (`@kolisachint/hoocode-agent`) instead of passing the raw `systemPrompt` through. Each role's prompt rides on hoocode's coding-assistant base via `appendSystemPrompt`, so it gains the Available-tools list (driven by the node's actual tools) and guidelines, plus project context and skills loaded from the role's `cwd` with hoocode's published `loadProjectContextFiles`/`loadSkills` loaders — re-implementing those would drift from CLI behavior. hooteams' HITL protocol is still appended last. New exports: `buildRoleSystemPrompt`, `buildSystemPromptAvailable`, the `RolePromptInputs`/`HoocodePromptApi` types, and re-exports of hoocode's `loadProjectContextFiles`, `loadSkills`, and `getAgentDir`.
