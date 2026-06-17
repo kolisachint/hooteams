@@ -30,13 +30,21 @@ every consumer depends on.
 packages/
   dag/            dependency-free task DAG: topological order, ready/blocked, immutable snapshots
   orchestrator/   team execution, planner, agent registry, tagged event channel, TeamOrchestrator
+    src/role-prompt.ts   builds each role's system prompt via hoocode's buildSystemPrompt
+                         (tools list + guidelines + project context + skills), HITL appended
+    src/planner.ts       dry-run/live planner; formatRoster() feeds the configured team
+                         (with categories) into the planner so it routes by tier
   bridge/         SSE fan-out, wire serializer, HTTP routes (Bun-native router)
   webui/          live mission control (React 19 + Vite + Tailwind v4 + zustand)
 apps/
   server/         Bun.serve() entry: orchestrator → bridge → HTTP → web UI
-  cli/            hooteams start / run / attach / nudge / status / stop
+    src/config.ts        loadConfig() discovery: .agents/teams/team.json → hooteams.config.json
+    src/rules.ts         loadRules(): reads .agents/teams/rules/**/*.md, injected into prompts
+  cli/            hooteams init / work / start / plan / run / attach / nudge / status / stop
+    src/commands.ts      init (scaffold), work (plan→run→follow, --loop), and the rest
 examples/         runnable task graphs (*.json) + verify scripts
 docs/             feature notes (e.g. hitl-gates.md)
+.agents/teams/    per-project team convention scaffolded by `hooteams init` (see §2.5)
 ```
 
 Bun **workspaces** (`packages/*`, `apps/*`). Internal deps are published as
@@ -44,7 +52,37 @@ Bun **workspaces** (`packages/*`, `apps/*`). Internal deps are published as
 
 ---
 
-## 2.5 Fast lookup — where things live (read this before grepping)
+## 2.5 Project convention: `.agents/teams/`
+
+`hooteams init` scaffolds a per-project team here. Everything a team needs lives
+under this one directory, and the runtime discovers it automatically:
+
+```
+.agents/
+  teams/
+    team.json            the team config (ServerConfig schema): defaults, team[],
+                         maxConcurrent, rulesDir, validator, …
+    rules/               *.md injected into EVERY agent's system prompt
+      00-style.md          starter conventions (code style, tests, scope)
+      AGENTS.md            project guidance for agents (lives here so it's injected,
+                           not just docs — a root AGENTS.md would be hoocode-only)
+  commands/              (pre-existing) slash-command markdown, e.g. pr.md
+```
+
+How each piece is consumed:
+
+| File / dir | Loaded by | Effect |
+| --- | --- | --- |
+| `.agents/teams/team.json` | `loadConfig()` (`apps/server/src/config.ts`) | Discovered before `hooteams.config.json`. Defines roles, models, categories, `maxConcurrent`, `rulesDir`, `validator`. `--config <path>` overrides. |
+| `team.json` → `team[].category` | `Planner` via `formatRoster()` | The planner sees each role's category (`plan`/`deep`/`quick`) and routes tasks to the right agent instead of spawning new ones. |
+| `team.json` → `rulesDir` | `loadRules()` (`apps/server/src/rules.ts`) | Directory of rule files; defaults to `.agents/teams/rules`. |
+| `.agents/teams/rules/**/*.md` | `loadRules()` → `createNodeHarnessFactory({ rules })` → `buildRoleSystemPrompt({ extraContextFiles })` | Concatenated (after hoocode's discovered project context) into every role's system prompt. |
+
+Discovery order for the config: `--config <path>` (must exist) → `.agents/teams/team.json` → `hooteams.config.json` → empty team. A missing `rulesDir` is silently ignored.
+
+---
+
+## 2.6 Fast lookup — where things live (read this before grepping)
 
 Most UI questions and feature-add tasks touch a small, predictable set of files.
 Start here so exploration is a direct read, not a repo-wide scan. **Delegate the
@@ -201,7 +239,7 @@ the stream view followed this exact path.
    (subscribe to a `TeamChannel`, run a `TeamOrchestrator`, filter events).
 8. **Verify** — `bun test`, `bun run check`, `bun run build:webui`.
 
-> Fast start: before writing code, hand the §2.5 file pointers to the `explore`
+> Fast start: before writing code, hand the §2.6 file pointers to the `explore`
 > subagent ("trace how `<event>` flows from publish to render") so the relevant
 > slice comes back mapped — then edit directly. Skip the open-ended repo scan.
 
