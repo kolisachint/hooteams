@@ -6,7 +6,7 @@ export { InMemorySessionRepo, JsonlSessionRepo, Session, toSession } from "@koli
 export { getModel } from "@kolisachint/hoocode-ai";
 export { ApprovalRegistry, askOptions } from "./ask-options.js";
 export type { ApprovalRequest } from "./ask-options.js";
-export { createHoocodeAuth, defaultAuthPath } from "./auth.js";
+export { createHoocodeAuth, defaultAuthPath, resolveTeamModel } from "./auth.js";
 export type { AuthCredential, AuthFileData, GetApiKey, HoocodeAuthOptions } from "./auth.js";
 export { REPLAY_BUFFER_SIZE, TeamChannel } from "./channel.js";
 // hoocode's published prompt loaders, re-exported so hosts can reuse them without

@@ -1,7 +1,8 @@
 import { Agent, type AgentMessage, type AgentTool, type StreamFn } from "@kolisachint/hoocode-agent-core";
-import { getModel, type Model, Type } from "@kolisachint/hoocode-ai";
+import { type Model, Type } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
 import type { TaskDag } from "@kolisachint/hooteams-dag";
+import { resolveTeamModel } from "./auth.js";
 import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import type { Team } from "./team.js";
 import { extractMessageText } from "./team-orchestrator.js";
@@ -437,7 +438,7 @@ export class Planner {
 	readonly planBuffer?: PlanBuffer;
 
 	constructor(options: PlannerOptions) {
-		const model = options.model ?? getModel("anthropic", "claude-sonnet-4-5");
+		const model = options.model ?? resolveTeamModel("anthropic", "claude-sonnet-4-5");
 		if (options.dryRun) {
 			this.planBuffer = { roles: [], tasks: [] };
 		}

@@ -1,4 +1,4 @@
-import { findEnvKeys, getEnvApiKey } from "@kolisachint/hoocode-ai";
+import { findEnvKeys, getEnvApiKey, getModel, type Model } from "@kolisachint/hoocode-ai";
 import { getOAuthApiKey, getOAuthProvider, type OAuthCredentials } from "@kolisachint/hoocode-ai/oauth";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -73,6 +73,30 @@ async function refreshOAuthWithLock(authPath: string, provider: string): Promise
 	} finally {
 		await release();
 	}
+}
+
+/**
+ * Resolve a model the way the base hoocode agent does, not via the raw static
+ * table. `getModel(provider, modelId)` returns hardcoded baseUrls (e.g.
+ * github-copilot's `https://api.individual.githubcopilot.com`), which 403s for
+ * business/enterprise accounts behind a corporate proxy. When the provider has
+ * an oauth entry in auth.json, its OAuth provider's `modifyModels()` rewrites
+ * the baseUrl from the token's `proxy-ep` (proxy.business.githubcopilot.com ->
+ * api.business.githubcopilot.com), matching what hoocode applies internally.
+ */
+export function resolveTeamModel(provider: string, modelId: string, authPath?: string): Model<any> {
+	const model: Model<any> | undefined = getModel(provider as any, modelId as any);
+	if (!model) {
+		return model as unknown as Model<any>;
+	}
+	const cred = readAuthFile(authPath ?? defaultAuthPath())[provider];
+	if (cred?.type === "oauth") {
+		const modified = getOAuthProvider(provider)?.modifyModels?.([model], cred);
+		if (modified?.[0]) {
+			return modified[0];
+		}
+	}
+	return model;
 }
 
 /**
