@@ -56,6 +56,12 @@ export interface StartRunTask {
 	/** Extra attempts the task gets after a failed run. Default 0. */
 	retries?: number;
 	/**
+	 * Wall-clock budget for one dispatch of the task, in milliseconds. An overrun
+	 * is aborted and settles the attempt as a failure (then subject to `retries`).
+	 * Unset or <= 0 means no timeout.
+	 */
+	timeoutMs?: number;
+	/**
 	 * Per-task approval policy overriding the run default: true forces a human
 	 * completion gate before this task settles "done" (even in an autonomous run);
 	 * false skips it. Unset follows the run default. Lets a run gate only at

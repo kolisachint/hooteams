@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { TaskDag } from "@kolisachint/hooteams-dag";
 import { resolveTeamModel } from "./auth.js";
 import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
+import { enforceSpawnPolicy, type SpawnPolicy } from "./spawn-policy.js";
 import type { Team } from "./team.js";
 import { extractMessageText } from "./team-orchestrator.js";
 import type { RoleConfig, ThinkingLevel } from "./types.js";
@@ -27,6 +28,11 @@ const spawnAgentParams = Type.Object({
 	retries: Type.Optional(
 		Type.Number({ description: "Extra attempts the task gets if its run fails, before the failure is escalated" }),
 	),
+	timeoutMs: Type.Optional(
+		Type.Number({
+			description: "Wall-clock budget for one run of this task, in milliseconds; an overrun is aborted and counts as a failed attempt",
+		}),
+	),
 	defaultTools: Type.Optional(
 		Type.Boolean({
 			description: "Give the agent hoocode's built-in coding tools (bash/read/edit/write/grep/find/ls)",
@@ -45,7 +51,7 @@ const spawnAgentParams = Type.Object({
  * When a dag is supplied, a taskId param registers the worker's task in it so
  * the orchestrator tracks the worker by task id, not just role.
  */
-export function createSpawnAgentTool(team: Team, dag?: TaskDag): AgentTool<typeof spawnAgentParams> {
+export function createSpawnAgentTool(team: Team, dag?: TaskDag, policy?: SpawnPolicy): AgentTool<typeof spawnAgentParams> {
 	return {
 		name: "spawn_agent",
 		label: "Spawn Agent",
@@ -57,6 +63,12 @@ export function createSpawnAgentTool(team: Team, dag?: TaskDag): AgentTool<typeo
 			"and a taskId to register that task in the team's task DAG.",
 		parameters: spawnAgentParams,
 		execute: async (_toolCallId, params) => {
+			// Bound what the planner (untrusted LLM) may grant the worker before
+			// anything is spawned; a violation throws and the planner re-plans.
+			enforceSpawnPolicy(
+				{ role: params.role, defaultTools: params.defaultTools, mcpConfigPath: params.mcpConfigPath, cwd: params.cwd },
+				policy,
+			);
 			const config: RoleConfig = {
 				role: params.role,
 				systemPrompt: params.systemPrompt,
@@ -68,7 +80,7 @@ export function createSpawnAgentTool(team: Team, dag?: TaskDag): AgentTool<typeo
 			};
 			const agent = await team.spawnAsync(config);
 			if (dag && params.taskId && !dag.get(params.taskId)) {
-				dag.add({ id: params.taskId, role: params.role, deps: params.deps, retries: params.retries });
+				dag.add({ id: params.taskId, role: params.role, deps: params.deps, retries: params.retries, timeoutMs: params.timeoutMs });
 			}
 			if (params.task) {
 				if (dag && params.taskId) {
@@ -265,6 +277,7 @@ export interface PlannedTask {
 	prompt?: string;
 	deps?: string[];
 	retries?: number;
+	timeoutMs?: number;
 }
 
 /**
@@ -290,7 +303,7 @@ function freeTaskId(buffer: PlanBuffer, preferred: string): string {
  * the plan buffer instead of spawning anything, so the plan can be inspected
  * (and approved) before a single agent runs.
  */
-export function createPlanSpawnAgentTool(buffer: PlanBuffer): AgentTool<typeof spawnAgentParams> {
+export function createPlanSpawnAgentTool(buffer: PlanBuffer, policy?: SpawnPolicy): AgentTool<typeof spawnAgentParams> {
 	return {
 		name: "spawn_agent",
 		label: "Plan Agent",
@@ -300,6 +313,12 @@ export function createPlanSpawnAgentTool(buffer: PlanBuffer): AgentTool<typeof s
 			"the task ids whose results it needs.",
 		parameters: spawnAgentParams,
 		execute: async (_toolCallId, params) => {
+			// Validate against the same policy a live spawn would face, so an
+			// inspected plan can't recommend a worker the orchestrator would reject.
+			enforceSpawnPolicy(
+				{ role: params.role, defaultTools: params.defaultTools, mcpConfigPath: params.mcpConfigPath, cwd: params.cwd },
+				policy,
+			);
 			if (!buffer.roles.some((role) => role.role === params.role)) {
 				buffer.roles.push({
 					role: params.role,
@@ -314,7 +333,14 @@ export function createPlanSpawnAgentTool(buffer: PlanBuffer): AgentTool<typeof s
 			let taskId: string | undefined;
 			if (params.task || params.taskId) {
 				taskId = freeTaskId(buffer, params.taskId ?? params.role);
-				buffer.tasks.push({ id: taskId, role: params.role, prompt: params.task, deps: params.deps, retries: params.retries });
+				buffer.tasks.push({
+					id: taskId,
+					role: params.role,
+					prompt: params.task,
+					deps: params.deps,
+					retries: params.retries,
+					timeoutMs: params.timeoutMs,
+				});
 			}
 			const note = taskId ? ` with task "${taskId}"` : "";
 			return {
@@ -390,6 +416,12 @@ export interface PlannerOptions {
 	 * (and run later via tasks.json / POST /runs) before any agent starts.
 	 */
 	dryRun?: boolean;
+	/**
+	 * Capability ceiling for the workers this planner spawns via spawn_agent.
+	 * Omitted means the restrictive default (no MCP, cwd confined to the project
+	 * root); see {@link SpawnPolicy}.
+	 */
+	spawnPolicy?: SpawnPolicy;
 }
 
 const DEFAULT_PLANNER_PROMPT = `You are the planner of a team of AI agents.
@@ -455,9 +487,9 @@ export class Planner {
 			this.planBuffer = { roles: [], tasks: [] };
 		}
 		const teamTools: AgentTool<any>[] = this.planBuffer
-			? [createPlanSpawnAgentTool(this.planBuffer), createPlanDelegateTaskTool(this.planBuffer)]
+			? [createPlanSpawnAgentTool(this.planBuffer, options.spawnPolicy), createPlanDelegateTaskTool(this.planBuffer)]
 			: [
-					createSpawnAgentTool(options.team),
+					createSpawnAgentTool(options.team, undefined, options.spawnPolicy),
 					createDelegateTaskTool(options.team),
 					createAskAgentTool(options.team, { selfRole: PLANNER_ROLE }),
 				];

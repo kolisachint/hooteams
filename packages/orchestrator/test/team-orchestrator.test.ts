@@ -783,6 +783,45 @@ describe("TeamOrchestrator", () => {
 		expect(await customEntries(session, "run_end")).toEqual([{ runId: "run-f", status: "failed", ts: expect.any(Number) }]);
 	});
 
+	test("a per-node timeout aborts the run and fails the attempt, which retries then consume", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "slow", role: "coder", timeoutMs: 20, retries: 1 });
+
+		let aborts = 0;
+		const harnesses: FakeHarness[] = [];
+		const createHarness = (node: TaskNode) => {
+			const attempt = harnesses.length;
+			// The first attempt hangs (never ends its run) so the timeout fires;
+			// the retry finishes normally.
+			const fake = new FakeHarness((harness, text) => {
+				if (attempt > 0) {
+					harness.say(`did ${text}`);
+					harness.endRun([assistant(`did ${text}`)]);
+				}
+			});
+			(fake as unknown as { abort: () => void }).abort = () => {
+				aborts++;
+				fake.failRun(new Error("aborted by timeout"));
+			};
+			harnesses.push(fake);
+			return { harness: fake, sessionId: `session-${node.id}-${attempt}` };
+		};
+
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+
+		await new TeamOrchestrator(dag, { session, channel, createHarness, runId: "run-timeout" }).run();
+
+		const retried = events.filter((event) => event.type === "task_retried");
+		expect(retried).toHaveLength(1);
+		expect((retried[0] as { error: string }).error).toMatch(/timed out after 20ms/);
+		expect(aborts).toBe(1);
+		expect(harnesses).toHaveLength(2);
+		expect(dag.get("slow")?.status).toBe("done");
+	});
+
 	test("run() may only be called once", async () => {
 		const session = await new InMemorySessionRepo().create();
 		const dag = new TaskDag();

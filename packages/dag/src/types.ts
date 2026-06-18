@@ -24,6 +24,13 @@ export interface TaskNode {
 	/** Failed attempts consumed so far; set by the orchestrator. */
 	attempts?: number;
 	/**
+	 * Wall-clock budget for a single dispatch of this node, in milliseconds. When
+	 * the run exceeds it the orchestrator aborts the agent and settles the attempt
+	 * as a failure — which is then subject to the node's `retries` like any other
+	 * failed run. Unset or <= 0 means no timeout.
+	 */
+	timeoutMs?: number;
+	/**
 	 * Per-node approval policy, overriding the run-wide default: true forces a
 	 * human completion gate before this node settles "done" (even in an otherwise
 	 * autonomous run); false skips it (even in an otherwise HITL run). Unset means

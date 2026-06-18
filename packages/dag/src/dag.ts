@@ -6,6 +6,8 @@ export interface TaskNodeInput {
 	deps?: string[];
 	/** Extra dispatch attempts the node gets after a failed run. Default 0. */
 	retries?: number;
+	/** Wall-clock budget for one dispatch, in ms; an overrun is aborted and fails the attempt (see TaskNode.timeoutMs). */
+	timeoutMs?: number;
 	/** Per-node approval policy overriding the run default (see TaskNode.gate). */
 	gate?: boolean;
 	/** Keep the node's agent live as a messaging target after it settles (see TaskNode.advisor). */
@@ -26,6 +28,7 @@ export class TaskDag {
 		}
 		const node: TaskNode = { id: input.id, role: input.role, deps: input.deps?.slice() ?? [], status: "idle" };
 		if (input.retries !== undefined) node.retries = input.retries;
+		if (input.timeoutMs !== undefined) node.timeoutMs = input.timeoutMs;
 		if (input.gate !== undefined) node.gate = input.gate;
 		if (input.advisor !== undefined) node.advisor = input.advisor;
 		this.nodes.set(input.id, node);

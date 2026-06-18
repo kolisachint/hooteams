@@ -189,7 +189,15 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 						`Unknown role "${task.role}". Configured roles: ${available.length > 0 ? available.join(", ") : "(none)"}`,
 					);
 				}
-				dag.add({ id: task.id, role: task.role, deps: task.deps, retries: task.retries, gate: task.gate, advisor: task.advisor });
+				dag.add({
+					id: task.id,
+					role: task.role,
+					deps: task.deps,
+					retries: task.retries,
+					timeoutMs: task.timeoutMs,
+					gate: task.gate,
+					advisor: task.advisor,
+				});
 			}
 			dag.topologicalOrder(); // throws on unknown deps and cycles
 		} catch (err) {

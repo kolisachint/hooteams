@@ -214,6 +214,9 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 				prompt: (text) => harness.prompt(text),
 				steer: (text) => harness.steer(text),
 				subscribe: (listener) => harness.subscribe((event) => listener(event as AgentEvent)),
+				// Lets the orchestrator's per-node timeout actually halt the model run
+				// (same abort Team.kill uses), not just free the node's slot.
+				abort: () => harness.agent.abort(),
 			},
 			agentId,
 			sessionId: (await session.getMetadata()).id,
