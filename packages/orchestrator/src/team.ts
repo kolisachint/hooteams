@@ -1,6 +1,7 @@
 import { Agent, type AgentTool, getDefaultTools, loadMcpTools, type StreamFn } from "@kolisachint/hoocode-agent-core";
-import { getModel, type Model } from "@kolisachint/hoocode-ai";
+import { type Model } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
+import { resolveTeamModel } from "./auth.js";
 import type { TeamChannel } from "./channel.js";
 import type { AgentStatus, RoleConfig, TeamEvent } from "./types.js";
 
@@ -70,7 +71,7 @@ export class Team {
 		}
 		const model = this.options.resolveModel
 			? this.options.resolveModel(config)
-			: getModel((config.provider ?? "anthropic") as any, config.model as any);
+			: resolveTeamModel(config.provider ?? "anthropic", config.model);
 		if (!model) {
 			throw new Error(`Unknown model "${config.model}" for provider "${config.provider ?? "anthropic"}"`);
 		}

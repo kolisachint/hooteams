@@ -1,4 +1,4 @@
-import { createHoocodeAuth, getModel, Planner, type RoleConfig, Team, TeamChannel } from "@kolisachint/hooteams-orchestrator";
+import { createHoocodeAuth, Planner, resolveTeamModel, type RoleConfig, Team, TeamChannel } from "@kolisachint/hooteams-orchestrator";
 import { loadConfig, type RunningServer, startServer } from "@kolisachint/hooteams-server";
 import { createInterface } from "node:readline/promises";
 import { join } from "node:path";
@@ -156,11 +156,17 @@ export async function runPlanner(goal: string, modelId?: string, provider?: stri
 	// it routes tasks to the right agent tier. Config problems shouldn't block
 	// planning, so a load failure just means no roster.
 	let availableRoles: RoleConfig[] = [];
+	let defaults: { provider?: string; model?: string } = {};
 	try {
-		availableRoles = (await loadConfig(configPath)).team;
+		const cfg = await loadConfig(configPath);
+		availableRoles = cfg.team;
+		defaults = cfg.defaults ?? {};
 	} catch (error) {
 		console.error(`(planner) ignoring team config: ${error instanceof Error ? error.message : String(error)}`);
 	}
+	// CLI flags win; fall back to the team config's defaults.provider/model.
+	const resolvedProvider = provider ?? defaults.provider;
+	const resolvedModelId = modelId ?? defaults.model;
 	const channel = new TeamChannel();
 	const getApiKey = createHoocodeAuth();
 	const team = new Team(channel, { getApiKey });
@@ -171,7 +177,7 @@ export async function runPlanner(goal: string, modelId?: string, provider?: stri
 		dryRun: true,
 		getApiKey,
 		availableRoles,
-		model: modelId ? getModel((provider ?? "anthropic") as any, modelId as any) : undefined,
+		model: resolvedModelId ? resolveTeamModel(resolvedProvider ?? "anthropic", resolvedModelId) : undefined,
 	});
 	await planner.plan(goal);
 	const buffer = planner.planBuffer!;

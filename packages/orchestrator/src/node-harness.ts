@@ -8,8 +8,9 @@ import {
 	type Session,
 	type StreamFn,
 } from "@kolisachint/hoocode-agent-core";
-import { getModel, type Model } from "@kolisachint/hoocode-ai";
+import { type Model } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
+import { resolveTeamModel } from "./auth.js";
 import { createBoardTools, createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import { createAskAgentTool, createDelegateTaskTool } from "./planner.js";
 import { buildRoleSystemPrompt } from "./role-prompt.js";
@@ -69,7 +70,7 @@ export function createValidatorAgent(options: ValidatorAgentOptions): (context: 
 	return async (context: string): Promise<string> => {
 		const model = options.resolveModel
 			? options.resolveModel(config)
-			: getModel((config.provider ?? "anthropic") as any, config.model as any);
+			: resolveTeamModel(config.provider ?? "anthropic", config.model);
 		if (!model) {
 			throw new Error(`Unknown model "${config.model}" for provider "${config.provider ?? "anthropic"}"`);
 		}
@@ -148,7 +149,7 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 		}
 		const model = options.resolveModel
 			? options.resolveModel(config)
-			: getModel((config.provider ?? "anthropic") as any, config.model as any);
+			: resolveTeamModel(config.provider ?? "anthropic", config.model);
 		if (!model) {
 			throw new Error(`Unknown model "${config.model}" for provider "${config.provider ?? "anthropic"}"`);
 		}

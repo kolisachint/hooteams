@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AuthFileData, createHoocodeAuth } from "../src/auth.js";
+import { type AuthFileData, createHoocodeAuth, resolveTeamModel } from "../src/auth.js";
 
 const FAKE_PROVIDER = "hooteams-test-oauth";
 
@@ -105,5 +105,26 @@ describe("createHoocodeAuth", () => {
 			const getApiKey = createHoocodeAuth({ authPath });
 			expect(await getApiKey("anthropic")).toBe("sk-from-env");
 		});
+	});
+});
+
+describe("resolveTeamModel", () => {
+	test("derives github-copilot baseUrl from the oauth token's proxy-ep", () => {
+		const authPath = writeAuth({
+			"github-copilot": {
+				type: "oauth",
+				refresh: "refresh-1",
+				access: "tid=abc;exp=123;proxy-ep=proxy.business.githubcopilot.com;sku=enterprise",
+				expires: Date.now() + 60_000,
+			},
+		});
+		const model = resolveTeamModel("github-copilot", "claude-sonnet-4.6", authPath);
+		expect(model.baseUrl).toBe("https://api.business.githubcopilot.com");
+	});
+
+	test("leaves the static baseUrl untouched for a plain api_key provider", () => {
+		const authPath = writeAuth({ anthropic: { type: "api_key", key: "sk-test-123" } });
+		const model = resolveTeamModel("github-copilot", "claude-sonnet-4.6", authPath);
+		expect(model.baseUrl).toBe("https://api.individual.githubcopilot.com");
 	});
 });
