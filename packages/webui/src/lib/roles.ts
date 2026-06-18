@@ -31,6 +31,7 @@ export interface RoleInfo {
 export const ROLES: Record<string, RoleInfo> = {
 	orchestrator: { glyph: "◆", desc: "Lead — plans & ships" },
 	planner: { glyph: "▤", desc: "Breaks goal into tasks" },
+	coder: { glyph: "⌨", desc: "Writes the code" },
 	backend: { glyph: "❯", desc: "API & data layer" },
 	frontend: { glyph: "❮", desc: "UI & client" },
 	tester: { glyph: "✓", desc: "Unit & e2e tests" },
@@ -47,6 +48,7 @@ export function roleInfo(role: string): RoleInfo {
 const ROLE_TINT: Record<string, string> = {
 	orchestrator: "var(--accent)",
 	planner: "var(--accent)",
+	coder: "var(--info)",
 	backend: "var(--info)",
 	frontend: "var(--info)",
 	tester: "var(--ok)",

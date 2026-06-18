@@ -283,14 +283,24 @@ export const useStore = create<Store>((set) => ({
 	loadRun: (runInfo) => set({ runInfo, events: [], pending: runInfo.pending ?? {} }),
 	dispatch: (event) =>
 		set((state) => {
-			const runInfo = reduceRun(state.runInfo, event);
-			const pending = reducePending(state.pending, event);
+			// A dag_snapshot with a fresh runId starts a new run: clear the previous
+			// run's events/pending/agents so stale timings (and a carried-over
+			// startedAt/status) don't bleed across runs — e.g. `work … --keep`.
+			const isNewRun =
+				event.type === "dag_snapshot" && state.runInfo != null && event.runId !== state.runInfo.runId;
+			const prevRunInfo = isNewRun ? null : state.runInfo;
+			const prevPending = isNewRun ? {} : state.pending;
+			const prevEvents = isNewRun ? [] : state.events;
+			const prevAgents = isNewRun ? new Map<string, AgentState>() : state.agents;
+
+			const runInfo = reduceRun(prevRunInfo, event);
+			const pending = reducePending(prevPending, event);
 			const line = feedFor(event);
-			const events = line ? [...state.events, line].slice(-MAX_FEED) : state.events;
+			const events = line ? [...prevEvents, line].slice(-MAX_FEED) : prevEvents;
 			// Run/dag-level events (role "orchestrator") drive the task graph only —
 			// they must not spawn an agent card.
-			if (event.role === "orchestrator") return { runInfo, pending, events };
-			const agents = new Map(state.agents);
+			if (event.role === "orchestrator") return { runInfo, pending, events, agents: prevAgents };
+			const agents = new Map(prevAgents);
 			const current = agents.get(event.role) ?? emptyAgent(event.role, event.agentId);
 			agents.set(event.role, reduce(current, event));
 			return { agents, runInfo, pending, events };

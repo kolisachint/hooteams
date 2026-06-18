@@ -5,6 +5,16 @@ import { useMemo } from "react";
 import { layout, type MissionTask, type TaskTiming } from "../lib/mission";
 import { roleInfo, statColor } from "../lib/roles";
 
+/** Round a raw seconds-per-tick up to a readable 1/2/5×10ⁿ step (min 1s). */
+function niceStep(raw: number): number {
+	if (!(raw > 0) || !Number.isFinite(raw)) return 1;
+	const exp = Math.floor(Math.log10(raw));
+	const base = 10 ** exp;
+	const frac = raw / base;
+	const mult = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 5 ? 5 : 10;
+	return Math.max(1, mult * base);
+}
+
 export function Timeline({
 	taskList,
 	timings,
@@ -39,8 +49,11 @@ export function Timeline({
 	const maxEnd = Math.max(elapsedSec, 20, ...taskList.map((t) => sched[t.id]!.end));
 	const span = maxEnd + 4;
 	const pct = (x: number) => (x / span) * 100;
+	// Adaptive tick step: target ~10 ticks regardless of run length, so a long
+	// `--keep` session doesn't smear fixed 10s ticks into an unreadable smudge.
+	const step = niceStep(span / 10);
 	const ticks: number[] = [];
-	for (let s = 0; s <= span; s += 10) ticks.push(s);
+	for (let s = 0; s <= span; s += step) ticks.push(s);
 
 	return (
 		<div className="timeline">
@@ -52,8 +65,8 @@ export function Timeline({
 						t.status === "running" || t.status === "retrying"
 							? Math.min(end, Math.max(start + 1, elapsedSec))
 							: end;
-					const left = pct(start);
-					const width = Math.max(1.5, pct(drawEnd) - pct(start));
+					const left = Math.max(0, pct(start));
+					const width = Math.max(1.5, pct(drawEnd) - left);
 					return (
 						<div
 							className="tl-row"

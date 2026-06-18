@@ -417,6 +417,30 @@ describe("per-role tools", () => {
 		expect(team.has("spawned")).toBe(true);
 	});
 
+	test("spawn → adopt → release restores the spawned member so status() keeps the role", async () => {
+		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel, streamFn: textStreamFn() });
+		const spawned = team.spawn({ role: "coder", systemPrompt: "code", model: "fake-model" });
+		expect(Object.keys(team.status())).toEqual(["coder"]);
+
+		// A DAG node adopts the same role mid-run, shadowing the spawned agent.
+		const node = team.spawn({ role: "node", systemPrompt: "n", model: "fake-model" });
+		team.adopt("coder", "node-1", node);
+		expect(team.get("coder")).toBe(node);
+		expect(team.status().coder).toBeDefined();
+
+		// On node teardown the original spawned agent is restored, not deleted —
+		// status() must still report the role (regression: coder used to vanish).
+		team.release("coder", "node-1");
+		expect(team.has("coder")).toBe(true);
+		expect(team.get("coder")).toBe(spawned);
+		expect(Object.keys(team.status())).toContain("coder");
+		// And nudging the role still resolves to a member rather than throwing
+		// "No agent for role" — the bug that broke `hooteams nudge coder`.
+		team.steer("coder", "ping");
+		await spawned.waitForIdle();
+		expect(JSON.stringify(spawned.state.messages)).toContain("ping");
+	});
+
 	test("createNodeHarnessFactory adopts the node agent so a peer's delegate_task reaches it; dispose releases", async () => {
 		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel, streamFn: textStreamFn() });
 		const sessionsRoot = await mkdtemp(join(tmpdir(), "node-adopt-"));
