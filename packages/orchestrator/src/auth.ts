@@ -21,11 +21,50 @@ function expandTilde(path: string): string {
 	return path.startsWith("~/") || path === "~" ? join(homedir(), path.slice(1)) : path;
 }
 
+/**
+ * hooteams' built-in fallback model defaults, used only when hoocode exposes no
+ * configured defaults (no settings.json, or it omits the fields). Keep these as
+ * the single source of truth for "the default model" across the codebase.
+ */
+export const DEFAULT_PROVIDER = "anthropic";
+export const DEFAULT_MODEL = "claude-sonnet-4-5";
+
+/** The hoocode agent dir: $HOOCODE_CODING_AGENT_DIR (tilde-expanded), else ~/.hoocode. */
+export function hoocodeAgentDir(): string {
+	const envDir = process.env.HOOCODE_CODING_AGENT_DIR;
+	return envDir ? expandTilde(envDir) : join(homedir(), ".hoocode");
+}
+
 /** The auth.json hoocode maintains; hooteams reads it instead of running its own login flow. */
 export function defaultAuthPath(): string {
-	const envDir = process.env.HOOCODE_CODING_AGENT_DIR;
-	const dir = envDir ? expandTilde(envDir) : join(homedir(), ".hoocode");
-	return join(dir, "auth.json");
+	return join(hoocodeAgentDir(), "auth.json");
+}
+
+/**
+ * Discover the provider/model hoocode is already configured with, so teams
+ * default to the same model the user runs hoocode with instead of always
+ * anthropic. Reads settings.json (`defaultProvider`/`defaultModel`) from the
+ * hoocode agent dir; falls back to DEFAULT_PROVIDER/DEFAULT_MODEL field-by-field
+ * when absent or unreadable, so the returned pair is always coherent.
+ */
+export function discoverHoocodeDefaults(settingsPath?: string): { provider: string; model: string } {
+	const path = settingsPath ?? join(hoocodeAgentDir(), "settings.json");
+	try {
+		if (existsSync(path)) {
+			const settings = JSON.parse(readFileSync(path, "utf-8")) as {
+				defaultProvider?: unknown;
+				defaultModel?: unknown;
+			};
+			const provider = typeof settings.defaultProvider === "string" ? settings.defaultProvider : undefined;
+			const model = typeof settings.defaultModel === "string" ? settings.defaultModel : undefined;
+			if (provider || model) {
+				return { provider: provider ?? DEFAULT_PROVIDER, model: model ?? DEFAULT_MODEL };
+			}
+		}
+	} catch {
+		// Unreadable/malformed settings — fall back silently.
+	}
+	return { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL };
 }
 
 function readAuthFile(authPath: string): AuthFileData {

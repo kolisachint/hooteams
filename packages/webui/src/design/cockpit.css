@@ -1076,7 +1076,7 @@ button {
 }
 .term .caret {
 	color: var(--accent);
-	animation: blink 1s steps(1) infinite;
+	animation: blink 2s steps(1) infinite;
 }
 @keyframes blink {
 	50% {

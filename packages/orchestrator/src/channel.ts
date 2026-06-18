@@ -25,10 +25,23 @@ export type TeamEventListener = (event: TeamEvent) => void;
  * AgentEvent with { role, agentId, ts }, and keeps a per-agent ring buffer of
  * the last REPLAY_BUFFER_SIZE events so late subscribers (terminal attach,
  * page reload) can replay what already happened.
+ *
+ * Events whose role has no attached agent — the orchestrator's run-level
+ * events (dag_snapshot, task_*, team_error under role "orchestrator") and
+ * adopted dag-node events the orchestrator mirrors directly — are buffered too,
+ * in a parallel per-role ring. Without this they fan out live but vanish from
+ * replay(), so a refreshing/reconnecting web UI never sees the task graph again.
  */
 export class TeamChannel {
 	private readonly emitter = new EventEmitter();
 	private readonly entries = new Map<string, ChannelEntry>();
+	/**
+	 * Ring buffers for events whose role has no attached agent (e.g. the
+	 * orchestrator's "orchestrator" run-level role, or dag nodes registered via
+	 * Team.adopt rather than attach). Keyed by role and capped like the
+	 * per-agent buffers, so replay() can re-emit them to late subscribers.
+	 */
+	private readonly unattachedBuffers = new Map<string, TeamEvent[]>();
 
 	constructor() {
 		// A team can fan out to many SSE clients; the default cap of 10 is too low.
@@ -61,14 +74,25 @@ export class TeamChannel {
 
 	/** Emit a pre-tagged event onto the bus (used internally and for synthetic events). */
 	publish(event: TeamEvent): void {
-		const entry = this.entries.get(event.role);
-		if (entry) {
-			entry.buffer.push(event);
-			if (entry.buffer.length > REPLAY_BUFFER_SIZE) {
-				entry.buffer.splice(0, entry.buffer.length - REPLAY_BUFFER_SIZE);
-			}
+		// Buffer into the attached agent's ring when there is one; otherwise into
+		// the role's unattached ring (run-level/orchestrator + adopted dag nodes),
+		// so replay() carries these to reconnecting clients instead of dropping them.
+		const buffer = this.entries.get(event.role)?.buffer ?? this.unattachedBufferFor(event.role);
+		buffer.push(event);
+		if (buffer.length > REPLAY_BUFFER_SIZE) {
+			buffer.splice(0, buffer.length - REPLAY_BUFFER_SIZE);
 		}
 		this.emitter.emit("event", event);
+	}
+
+	/** The ring buffer for a role with no attached agent, created on first use. */
+	private unattachedBufferFor(role: string): TeamEvent[] {
+		let buffer = this.unattachedBuffers.get(role);
+		if (!buffer) {
+			buffer = [];
+			this.unattachedBuffers.set(role, buffer);
+		}
+		return buffer;
 	}
 
 	/** Subscribe to live events for all roles, or a single role when given. */
@@ -86,9 +110,16 @@ export class TeamChannel {
 	replay(role?: string, limit = REPLAY_BUFFER_SIZE): TeamEvent[] {
 		let events: TeamEvent[];
 		if (role) {
-			events = this.entries.get(role)?.buffer.slice() ?? [];
+			// A role can have both an attached buffer and an unattached one (e.g. it
+			// published before being spawned); merge both in timestamp order.
+			const attached = this.entries.get(role)?.buffer ?? [];
+			const unattached = this.unattachedBuffers.get(role) ?? [];
+			events = [...attached, ...unattached].sort((a, b) => a.ts - b.ts);
 		} else {
-			events = [...this.entries.values()].flatMap((entry) => entry.buffer).sort((a, b) => a.ts - b.ts);
+			events = [
+				...[...this.entries.values()].flatMap((entry) => entry.buffer),
+				...[...this.unattachedBuffers.values()].flat(),
+			].sort((a, b) => a.ts - b.ts);
 		}
 		return limit < events.length ? events.slice(events.length - limit) : events;
 	}
