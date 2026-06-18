@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.27] - 2026-06-18
 
 ### Fixed
 - Models are now resolved via the new `resolveTeamModel(provider, modelId, authPath?)` instead of the raw static `getModel()`. When the provider has an `oauth` entry in `auth.json`, its OAuth provider's `modifyModels()` is applied to pick up the corrected `baseUrl` — matching what the base hoocode agent does. This fixes `github-copilot` business/enterprise accounts behind a corporate proxy, which previously kept the hardcoded `https://api.individual.githubcopilot.com` and failed every call with `403 Access Denied`; the host is now derived from the OAuth token's `proxy-ep` (e.g. `proxy.business.githubcopilot.com` -> `api.business.githubcopilot.com`). Applied in `Team`, `createValidatorAgent`, `createNodeHarnessFactory`, and `Planner`. New export `resolveTeamModel`.
