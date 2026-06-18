@@ -1,7 +1,15 @@
-import { createHoocodeAuth, Planner, resolveTeamModel, type RoleConfig, Team, TeamChannel } from "@kolisachint/hooteams-orchestrator";
+import {
+	createHoocodeAuth,
+	discoverHoocodeDefaults,
+	Planner,
+	resolveTeamModel,
+	type RoleConfig,
+	Team,
+	TeamChannel,
+} from "@kolisachint/hooteams-orchestrator";
 import { loadConfig, type RunningServer, startServer } from "@kolisachint/hooteams-server";
-import { createInterface } from "node:readline/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { StreamRenderer } from "./render.js";
 import { consumeSSE } from "./sse.js";
 
@@ -378,20 +386,23 @@ interface ScaffoldFile {
 	content: string;
 }
 
-const TEAM_JSON = `${JSON.stringify(
-	{
-		defaults: { provider: "anthropic", model: "claude-sonnet-4-5" },
-		maxConcurrent: 3,
-		rulesDir: ".agents/teams/rules",
-		team: [
-			{ role: "planner", category: "plan", systemPrompt: "You are the planner. Break the goal into tasks and coordinate the team." },
-			{ role: "coder", category: "deep", defaultTools: true, systemPrompt: "You are the coder. Implement tasks one at a time, with tests." },
-			{ role: "reviewer", category: "quick", defaultTools: true, systemPrompt: "You are the reviewer. Check the work against the goal and flag gaps." },
-		],
-	},
-	null,
-	"\t",
-)}\n`;
+/** Render the scaffold team.json, wiring in the discovered hoocode model defaults. */
+function buildTeamJson(): string {
+	return `${JSON.stringify(
+		{
+			defaults: discoverHoocodeDefaults(),
+			maxConcurrent: 3,
+			rulesDir: ".agents/teams/rules",
+			team: [
+				{ role: "planner", category: "plan", systemPrompt: "You are the planner. Break the goal into tasks and coordinate the team." },
+				{ role: "coder", category: "deep", defaultTools: true, systemPrompt: "You are the coder. Implement tasks one at a time, with tests." },
+				{ role: "reviewer", category: "quick", defaultTools: true, systemPrompt: "You are the reviewer. Check the work against the goal and flag gaps." },
+			],
+		},
+		null,
+		"\t",
+	)}\n`;
+}
 
 const STYLE_RULE = `# Project rules
 
@@ -431,7 +442,7 @@ export interface InitOptions {
 export async function init(opts: InitOptions = {}): Promise<void> {
 	const cwd = opts.cwd ?? process.cwd();
 	const files: ScaffoldFile[] = [
-		{ path: join(".agents", "teams", "team.json"), content: TEAM_JSON },
+		{ path: join(".agents", "teams", "team.json"), content: buildTeamJson() },
 		{ path: join(".agents", "teams", "rules", "00-style.md"), content: STYLE_RULE },
 		{ path: join(".agents", "teams", "rules", "AGENTS.md"), content: AGENTS_STUB },
 	];

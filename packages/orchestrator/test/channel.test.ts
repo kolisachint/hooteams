@@ -134,3 +134,43 @@ describe("replay buffer", () => {
 		expect(new TeamChannel().replay("ghost")).toEqual([]);
 	});
 });
+
+describe("unattached-role buffering (orchestrator run-level events)", () => {
+	/** A run-level event the orchestrator publishes directly under role "orchestrator". */
+	const dagSnapshot = (ts: number): TeamEvent =>
+		({ type: "dag_snapshot", runId: "run-1", role: "orchestrator", agentId: "run-1", dag: {}, ts }) as unknown as TeamEvent;
+
+	test("replays directly-published events for a role with no attached agent", () => {
+		const channel = new TeamChannel();
+		// No attach() for "orchestrator": this is exactly how the orchestrator and
+		// adopted dag nodes publish. These must still survive replay so a refreshing
+		// web UI re-renders the task graph.
+		channel.publish(dagSnapshot(1));
+		channel.publish(dagSnapshot(2));
+
+		expect(channel.replay("orchestrator").map((event) => event.type)).toEqual(["dag_snapshot", "dag_snapshot"]);
+		expect(channel.replay().map((event) => event.type)).toEqual(["dag_snapshot", "dag_snapshot"]);
+	});
+
+	test("caps the unattached buffer at REPLAY_BUFFER_SIZE", () => {
+		const channel = new TeamChannel();
+		for (let i = 0; i < REPLAY_BUFFER_SIZE + 25; i++) channel.publish(dagSnapshot(i));
+		expect(channel.replay("orchestrator")).toHaveLength(REPLAY_BUFFER_SIZE);
+	});
+
+	test("merges attached and unattached buffers in timestamp order on full replay", () => {
+		const channel = new TeamChannel();
+		const coder = new FakeAgent();
+		channel.attach("coder", "id-1", coder);
+
+		channel.publish(dagSnapshot(Date.now()));
+		coder.emit(startEvent);
+		channel.publish(dagSnapshot(Date.now()));
+
+		const replay = channel.replay();
+		expect(replay).toHaveLength(3);
+		expect(replay.filter((event) => event.type === "dag_snapshot")).toHaveLength(2);
+		const stamps = replay.map((event) => event.ts);
+		expect(stamps).toEqual([...stamps].sort((a, b) => a - b));
+	});
+});

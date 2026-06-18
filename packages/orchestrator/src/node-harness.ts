@@ -10,7 +10,7 @@ import {
 } from "@kolisachint/hoocode-agent-core";
 import { type Model } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
-import { resolveTeamModel } from "./auth.js";
+import { DEFAULT_PROVIDER, resolveTeamModel } from "./auth.js";
 import { createBoardTools, createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import { createAskAgentTool, createDelegateTaskTool } from "./planner.js";
 import { buildRoleSystemPrompt } from "./role-prompt.js";
@@ -45,7 +45,7 @@ export interface ValidatorAgentOptions {
 	systemPrompt: string;
 	/** Model id, resolved via getModel() unless resolveModel is given. */
 	model: string;
-	/** Model provider for getModel(). Defaults to "anthropic". */
+	/** Model provider for getModel(). Defaults to DEFAULT_PROVIDER. */
 	provider?: string;
 	/** Resolves provider credentials per request, e.g. createHoocodeAuth(). */
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
@@ -70,9 +70,9 @@ export function createValidatorAgent(options: ValidatorAgentOptions): (context: 
 	return async (context: string): Promise<string> => {
 		const model = options.resolveModel
 			? options.resolveModel(config)
-			: resolveTeamModel(config.provider ?? "anthropic", config.model);
+			: resolveTeamModel(config.provider ?? DEFAULT_PROVIDER, config.model);
 		if (!model) {
-			throw new Error(`Unknown model "${config.model}" for provider "${config.provider ?? "anthropic"}"`);
+			throw new Error(`Unknown model "${config.model}" for provider "${config.provider ?? DEFAULT_PROVIDER}"`);
 		}
 		const agent = new Agent({
 			initialState: { systemPrompt: config.systemPrompt, model, thinkingLevel: "off", tools: [] },
@@ -149,9 +149,9 @@ export function createNodeHarnessFactory(options: NodeHarnessFactoryOptions): (n
 		}
 		const model = options.resolveModel
 			? options.resolveModel(config)
-			: resolveTeamModel(config.provider ?? "anthropic", config.model);
+			: resolveTeamModel(config.provider ?? DEFAULT_PROVIDER, config.model);
 		if (!model) {
-			throw new Error(`Unknown model "${config.model}" for provider "${config.provider ?? "anthropic"}"`);
+			throw new Error(`Unknown model "${config.model}" for provider "${config.provider ?? DEFAULT_PROVIDER}"`);
 		}
 		const cwd = config.cwd ?? process.cwd();
 		const env = new NodeExecutionEnv({ cwd });

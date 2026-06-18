@@ -7,7 +7,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AuthFileData, createHoocodeAuth, resolveTeamModel } from "../src/auth.js";
+import {
+	type AuthFileData,
+	createHoocodeAuth,
+	DEFAULT_MODEL,
+	DEFAULT_PROVIDER,
+	discoverHoocodeDefaults,
+	resolveTeamModel,
+} from "../src/auth.js";
 
 const FAKE_PROVIDER = "hooteams-test-oauth";
 
@@ -105,6 +112,37 @@ describe("createHoocodeAuth", () => {
 			const getApiKey = createHoocodeAuth({ authPath });
 			expect(await getApiKey("anthropic")).toBe("sk-from-env");
 		});
+	});
+});
+
+describe("discoverHoocodeDefaults", () => {
+	function writeSettings(settings: Record<string, unknown>): string {
+		const path = join(dir, "settings.json");
+		writeFileSync(path, JSON.stringify(settings), "utf-8");
+		return path;
+	}
+
+	test("reads defaultProvider/defaultModel from settings.json", () => {
+		const path = writeSettings({ defaultProvider: "openai", defaultModel: "gpt-5-codex" });
+		expect(discoverHoocodeDefaults(path)).toEqual({ provider: "openai", model: "gpt-5-codex" });
+	});
+
+	test("falls back field-by-field when one field is missing", () => {
+		const path = writeSettings({ defaultProvider: "google" });
+		expect(discoverHoocodeDefaults(path)).toEqual({ provider: "google", model: DEFAULT_MODEL });
+	});
+
+	test("falls back to the built-in defaults when the file is absent", () => {
+		expect(discoverHoocodeDefaults(join(dir, "missing", "settings.json"))).toEqual({
+			provider: DEFAULT_PROVIDER,
+			model: DEFAULT_MODEL,
+		});
+	});
+
+	test("falls back to the built-in defaults when the file is malformed", () => {
+		const path = join(dir, "settings.json");
+		writeFileSync(path, "{ not valid json", "utf-8");
+		expect(discoverHoocodeDefaults(path)).toEqual({ provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL });
 	});
 });
 

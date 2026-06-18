@@ -2,7 +2,7 @@ import { Agent, type AgentMessage, type AgentTool, type StreamFn } from "@kolisa
 import { type Model, Type } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
 import type { TaskDag } from "@kolisachint/hooteams-dag";
-import { resolveTeamModel } from "./auth.js";
+import { discoverHoocodeDefaults, resolveTeamModel } from "./auth.js";
 import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import { enforceSpawnPolicy, type SpawnPolicy } from "./spawn-policy.js";
 import type { Team } from "./team.js";
@@ -482,7 +482,10 @@ export class Planner {
 	readonly planBuffer?: PlanBuffer;
 
 	constructor(options: PlannerOptions) {
-		const model = options.model ?? resolveTeamModel("anthropic", "claude-sonnet-4-5");
+		// No explicit model: fall back to whatever hoocode is configured with
+		// (settings.json), else the built-in anthropic default.
+		const defaults = discoverHoocodeDefaults();
+		const model = options.model ?? resolveTeamModel(defaults.provider, defaults.model);
 		if (options.dryRun) {
 			this.planBuffer = { roles: [], tasks: [] };
 		}

@@ -1,13 +1,31 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { init } from "../src/commands.js";
 
 const dirs: string[] = [];
+let savedAgentDir: string | undefined;
+
+beforeEach(() => {
+	// Pin model discovery to an empty agent dir so init falls back to the
+	// documented anthropic defaults regardless of the host's ~/.hoocode.
+	savedAgentDir = process.env.HOOCODE_CODING_AGENT_DIR;
+	process.env.HOOCODE_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "hooteams-agentdir-"));
+	dirs.push(process.env.HOOCODE_CODING_AGENT_DIR);
+});
+
 afterEach(() => {
+	if (savedAgentDir === undefined) delete process.env.HOOCODE_CODING_AGENT_DIR;
+	else process.env.HOOCODE_CODING_AGENT_DIR = savedAgentDir;
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+/** Write a hoocode settings.json into the pinned agent dir for discovery tests. */
+function writeHoocodeSettings(settings: Record<string, unknown>): void {
+	const dir = process.env.HOOCODE_CODING_AGENT_DIR as string;
+	writeFileSync(join(dir, "settings.json"), JSON.stringify(settings));
+}
 
 function project(): string {
 	const dir = mkdtempSync(join(tmpdir(), "hooteams-init-"));
@@ -56,5 +74,20 @@ describe("init", () => {
 		const config = validateConfig(raw, "team.json");
 		expect(config.team).toHaveLength(3);
 		expect(config.team[1]?.model).toBe("claude-sonnet-4-5"); // from defaults
+	});
+
+	test("wires team.json defaults from hoocode's settings.json", async () => {
+		writeHoocodeSettings({ defaultProvider: "openai", defaultModel: "gpt-5-codex" });
+		const cwd = project();
+		await init({ cwd });
+		const teamJson = await Bun.file(join(cwd, ".agents", "teams", "team.json")).json();
+		expect(teamJson.defaults).toEqual({ provider: "openai", model: "gpt-5-codex" });
+	});
+
+	test("falls back to anthropic defaults when hoocode has no settings", async () => {
+		const cwd = project();
+		await init({ cwd });
+		const teamJson = await Bun.file(join(cwd, ".agents", "teams", "team.json")).json();
+		expect(teamJson.defaults).toEqual({ provider: "anthropic", model: "claude-sonnet-4-5" });
 	});
 });
