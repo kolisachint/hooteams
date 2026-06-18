@@ -30,6 +30,8 @@ interface TeamMember {
  */
 export class Team {
 	private readonly members = new Map<string, TeamMember>();
+	/** Spawned members that an adopt() temporarily shadowed, restored on release(). */
+	private readonly displaced = new Map<string, TeamMember>();
 
 	constructor(
 		readonly channel: TeamChannel,
@@ -100,21 +102,38 @@ export class Team {
 	 * role; release(role, agentId) only clears the entry it still owns. ask_agent
 	 * observes the node's replies through the orchestrator's event mirror, so
 	 * adopted messaging only works while that mirror is live (i.e. mid-run).
+	 *
+	 * A spawned (channel-attached) member shadowed by this adopt is cached so
+	 * release() can restore it — otherwise the spawned role would vanish from
+	 * status() once the adopted node settles.
 	 */
 	adopt(role: string, agentId: string, agent: Agent): void {
+		const existing = this.members.get(role);
+		// Only the original spawned member is worth caching; chained adopts (last
+		// writer wins) must not overwrite an already-cached spawned member.
+		if (existing && !existing.adopted && !this.displaced.has(role)) {
+			this.displaced.set(role, existing);
+		}
 		this.members.set(role, { role, agentId, agent, status: "idle", adopted: true });
 	}
 
 	/**
 	 * Drop a previously adopted member. No-op for spawned (channel-attached)
 	 * members — those are removed with kill(). The agentId guard avoids clearing
-	 * a newer same-role node that replaced this one before it released.
+	 * a newer same-role node that replaced this one before it released. If the
+	 * adopt had shadowed a spawned member, restore it instead of deleting the role.
 	 */
 	release(role: string, agentId?: string): void {
 		const member = this.members.get(role);
 		if (!member || !member.adopted) return;
 		if (agentId !== undefined && member.agentId !== agentId) return;
-		this.members.delete(role);
+		const spawned = this.displaced.get(role);
+		if (spawned) {
+			this.members.set(role, spawned);
+			this.displaced.delete(role);
+		} else {
+			this.members.delete(role);
+		}
 	}
 
 	get(role: string): Agent | undefined {
@@ -171,6 +190,7 @@ export class Team {
 		member.agent.abort();
 		this.channel.detach(role);
 		this.members.delete(role);
+		this.displaced.delete(role);
 	}
 
 	async killAll(): Promise<void> {
@@ -182,6 +202,7 @@ export class Team {
 			this.channel.detach(role);
 			this.members.delete(role);
 		}
+		this.displaced.clear();
 		await Promise.all(idle);
 	}
 

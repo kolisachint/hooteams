@@ -4,20 +4,33 @@
 import type { ToolChipState, TranscriptEntry } from "../lib/types";
 import { Icon } from "./Icon";
 
+/** Pull plain text out of a hoocode result envelope ({ content: [{ type, text }] })
+ *  so transcripts show "Wrote 8B…" rather than the raw JSON wrapper. */
+function unwrapContent(value: unknown): unknown {
+	if (value && typeof value === "object" && Array.isArray((value as { content?: unknown }).content)) {
+		const text = (value as { content: Array<{ text?: unknown }> }).content
+			.map((block) => (typeof block?.text === "string" ? block.text : ""))
+			.join("");
+		if (text) return text;
+	}
+	return value;
+}
+
 function summarize(value: unknown, max: number): string {
-	if (value == null) return "";
-	if (typeof value === "string") return value.length > max ? `${value.slice(0, max)}…` : value;
+	const v = unwrapContent(value);
+	if (v == null) return "";
+	if (typeof v === "string") return v.length > max ? `${v.slice(0, max)}…` : v;
 	try {
-		const s = JSON.stringify(value);
+		const s = JSON.stringify(v);
 		return s.length > max ? `${s.slice(0, max)}…` : s;
 	} catch {
-		return String(value);
+		return String(v);
 	}
 }
 
 function ToolCall({ tool }: { tool: ToolChipState }) {
 	const arg = summarize(tool.args, 80);
-	const result = tool.status === "error" ? summarize(tool.result, 120) : summarize(tool.result, 120);
+	const result = summarize(tool.result, 120);
 	return (
 		<div className={`tt tt-tool${tool.status === "error" ? " warn" : ""}`}>
 			<span className="tt-gut">

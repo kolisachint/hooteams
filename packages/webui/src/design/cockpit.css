@@ -702,6 +702,7 @@ button {
 	position: absolute;
 	top: 2px;
 	transform: translateX(-50%);
+	white-space: nowrap;
 }
 .tl-now {
 	position: absolute;
