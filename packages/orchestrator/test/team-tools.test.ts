@@ -187,7 +187,9 @@ describe("per-role tools", () => {
 
 	test("planner spawn_agent forwards defaultTools/cwd and spawns a tool-equipped worker", async () => {
 		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel });
-		const spawnTool = createSpawnAgentTool(team);
+		// The worker's cwd is a temp dir outside the repo, so open the policy's
+		// cwd root to it; the default policy would (correctly) reject it.
+		const spawnTool = createSpawnAgentTool(team, undefined, { cwdRoot: cwd });
 		expect(JSON.stringify(spawnTool.parameters)).toContain("mcpConfigPath");
 
 		const result = await spawnTool.execute("call-1", {
@@ -203,6 +205,25 @@ describe("per-role tools", () => {
 		const names = agent!.state.tools.map((tool) => tool.name);
 		expect(names).toContain("bash");
 		expect(JSON.stringify(result.content)).toContain("7 tools");
+	});
+
+	test("spawn_agent enforces the restrictive default policy and spawns nothing on a violation", async () => {
+		const team = new Team(new TeamChannel(), { resolveModel: () => fakeModel });
+		const spawnTool = createSpawnAgentTool(team);
+		// MCP is denied by default.
+		expect(
+			spawnTool.execute("call-1", {
+				role: "builder",
+				systemPrompt: "build",
+				model: "fake-model",
+				mcpConfigPath: "./mcp.json",
+			} as any),
+		).rejects.toThrow(/denied by policy/);
+		// A cwd outside the project root is denied by default.
+		expect(
+			spawnTool.execute("call-2", { role: "builder", systemPrompt: "build", model: "fake-model", cwd } as any),
+		).rejects.toThrow(/outside the project root/);
+		expect(team.roles()).toEqual([]);
 	});
 
 	test("spawn_agent registers the worker's task in the dag when taskId is given", async () => {
@@ -334,8 +355,8 @@ describe("per-role tools", () => {
 		expect(JSON.stringify(first.content)).toContain("dry run");
 		expect(planner.planBuffer!.roles.map((role) => role.role)).toEqual(["coder", "tester"]);
 		expect(planner.planBuffer!.tasks).toEqual([
-			{ id: "t-code", role: "coder", prompt: "implement it", deps: undefined, retries: 1 },
-			{ id: "t-test", role: "tester", prompt: "test it", deps: ["t-code"], retries: undefined },
+			{ id: "t-code", role: "coder", prompt: "implement it", deps: undefined, retries: 1, timeoutMs: undefined },
+			{ id: "t-test", role: "tester", prompt: "test it", deps: ["t-code"], retries: undefined, timeoutMs: undefined },
 		]);
 
 		// a clashing taskId gets a fresh id instead of overwriting

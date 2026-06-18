@@ -34,6 +34,8 @@ export {
 	PLANNER_ROLE,
 } from "./planner.js";
 export type { AskAgentOptions, PlanBuffer, PlannedTask, PlannerOptions } from "./planner.js";
+export { enforceSpawnPolicy, resolveSpawnPolicy } from "./spawn-policy.js";
+export type { SpawnPolicy, SpawnRequest } from "./spawn-policy.js";
 export { Team } from "./team.js";
 export type { TeamOptions } from "./team.js";
 export { FakeNodeHarness, fakeHarnessFactory } from "./testing.js";

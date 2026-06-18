@@ -15,6 +15,13 @@ export interface NodeHarness {
 	prompt(text: string): Promise<unknown>;
 	steer(text: string): void;
 	subscribe(listener: (event: AgentEvent) => Promise<void> | void): () => void;
+	/**
+	 * Stop the current run, if the runtime supports it. Used by the per-node
+	 * timeout to actually halt a wedged agent (so it stops consuming tokens), not
+	 * just settle its node. Optional: a harness without it still gets the slot
+	 * freed on timeout, but its run keeps going until it ends on its own.
+	 */
+	abort?(): void;
 }
 
 /** What the harness factory hands back for one dag node. */
@@ -181,6 +188,14 @@ interface ActiveNode {
 	paused: boolean;
 	/** True between a prompt() call and its settlement. */
 	runActive: boolean;
+	/** Pending per-node timeout for the current run; cleared once the run settles. */
+	timeoutTimer?: ReturnType<typeof setTimeout>;
+	/**
+	 * Guards the run's settlement so the timeout and the prompt promise can race
+	 * without double-settling: whichever fires first flips this and the other
+	 * no-ops. Reset each time a fresh run starts on this active node.
+	 */
+	runSettled?: boolean;
 	/** True once an advisor node's task has settled: its later runs (answering
 	 * peers) only mirror events and never re-trigger gate/marker/settle logic. */
 	settledAdvisor?: boolean;
@@ -525,16 +540,56 @@ export class TeamOrchestrator {
 
 	private startRun(active: ActiveNode, text: string): void {
 		active.runActive = true;
+		active.runSettled = false;
+		const timeoutMs = active.node.timeoutMs;
+		if (timeoutMs !== undefined && timeoutMs > 0) {
+			active.timeoutTimer = setTimeout(() => this.onRunTimeout(active), timeoutMs);
+		}
 		active.harness.prompt(text).then(
-			() => {
-				active.runActive = false;
-				this.onRunSettled(active);
-			},
-			(err) => {
-				active.runActive = false;
-				this.onRunSettled(active, err);
-			},
+			() => this.finishRun(active),
+			(err) => this.finishRun(active, err),
 		);
+	}
+
+	/**
+	 * Settle a run that ended on its own (the prompt promise resolved/rejected).
+	 * No-ops if a timeout already settled this run, so the abort-triggered
+	 * rejection that follows onRunTimeout can't settle the node a second time.
+	 */
+	private finishRun(active: ActiveNode, err?: unknown): void {
+		if (active.runSettled) return;
+		active.runSettled = true;
+		active.runActive = false;
+		this.clearRunTimeout(active);
+		this.onRunSettled(active, err);
+	}
+
+	/**
+	 * The per-node timeout fired: abort the agent (so it stops burning tokens)
+	 * and settle the attempt as a failure, which the node's `retries` then handle
+	 * like any other failed run. A run that already paused on a gate is left to
+	 * its resume path — its prompt promise already settled and cleared the timer,
+	 * so this is only a guard for the rare in-flight race.
+	 */
+	private onRunTimeout(active: ActiveNode): void {
+		if (active.runSettled || active.paused) return;
+		active.runSettled = true;
+		active.runActive = false;
+		active.timeoutTimer = undefined;
+		try {
+			active.harness.abort?.();
+		} catch {
+			// Best-effort: aborting is opportunistic; settle regardless.
+		}
+		this.onRunSettled(active, new Error(`Task "${active.node.id}" timed out after ${active.node.timeoutMs}ms`));
+	}
+
+	/** Clear a node's pending timeout, if any. */
+	private clearRunTimeout(active: ActiveNode): void {
+		if (active.timeoutTimer !== undefined) {
+			clearTimeout(active.timeoutTimer);
+			active.timeoutTimer = undefined;
+		}
 	}
 
 	private onHarnessEvent(active: ActiveNode, event: AgentEvent): void {
@@ -736,6 +791,8 @@ export class TeamOrchestrator {
 		const active = this.active.get(taskId);
 		if (active) {
 			this.active.delete(taskId);
+			// Drop any pending timeout up front so a torn-down node can't fire one.
+			this.clearRunTimeout(active);
 			if (keepAlive) {
 				active.settledAdvisor = true;
 				this.advisors.set(taskId, active); // stays subscribed + adopted for peers
