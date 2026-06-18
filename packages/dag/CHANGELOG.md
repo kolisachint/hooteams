@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.30] - 2026-06-18
 
 ### Added
 - `TaskNode.timeoutMs` / `TaskNodeInput.timeoutMs`: an optional per-node wall-clock budget (ms) for a single dispatch. The orchestrator aborts and fails an attempt that overruns it (then subject to the node's `retries`). Unset or `<= 0` means no timeout.

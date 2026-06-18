@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.30] - 2026-06-18
 
 ### Added
 - `StartRunTask.timeoutMs`: an optional per-task wall-clock budget (ms) carried through `POST /runs` to the DAG, capping a single dispatch before the orchestrator aborts and fails the attempt.

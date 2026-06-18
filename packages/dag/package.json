@@ -1,6 +1,6 @@
 {
 	"name": "@kolisachint/hooteams-dag",
-	"version": "0.1.29",
+	"version": "0.1.30",
 	"description": "Dependency-free task DAG for hooteams: topological order, ready/blocked tracking, immutable node snapshots, JSON persistence",
 	"type": "module",
 	"main": "./src/index.ts",

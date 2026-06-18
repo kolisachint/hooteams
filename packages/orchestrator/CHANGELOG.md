@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.30] - 2026-06-18
 
 ### Added
 - Spawn policy: a capability ceiling on the agents the planner spawns at runtime via `spawn_agent`. The planner is an LLM, so its spawn requests are untrusted; the policy is **restrictive by default** — MCP servers (`mcpConfigPath`) are denied and a worker's `cwd` is confined to the project root (`process.cwd()`) unless a host explicitly opens them. A violating spawn throws, surfacing the reason to the planner as a tool error so it can re-plan within bounds; nothing is spawned. Static, human-authored roles in the team config are trusted and bypass the policy — it governs only the dynamic, tool-driven path. New exports `enforceSpawnPolicy`, `resolveSpawnPolicy`, and the `SpawnPolicy`/`SpawnRequest` types; `createSpawnAgentTool` and `createPlanSpawnAgentTool` take an optional policy, and `PlannerOptions` gains `spawnPolicy`.
