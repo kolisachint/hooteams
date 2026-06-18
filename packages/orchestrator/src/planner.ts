@@ -336,10 +336,20 @@ export function createPlanDelegateTaskTool(buffer: PlanBuffer): AgentTool<typeof
 		parameters: delegateTaskParams,
 		execute: async (_toolCallId, params) => {
 			if (!buffer.roles.some((role) => role.role === params.role)) {
+				// Don't throw — in dry runs the planner intermittently delegates before
+				// it has spawned the role, and a thrown error renders as an alarming red
+				// failure even though it always recovers. Return a soft hint instead so
+				// the planner spawns the role first, with nothing recorded in the plan.
 				const roles = buffer.roles.map((role) => role.role);
-				throw new Error(
-					`No planned agent for role "${params.role}". Planned roles: ${roles.length > 0 ? roles.join(", ") : "(none — plan one with spawn_agent first)"}`,
-				);
+				return {
+					content: [
+						{
+							type: "text",
+							text: `No planned agent for role "${params.role}" yet — use spawn_agent to create it first, then delegate_task. Planned roles: ${roles.length > 0 ? roles.join(", ") : "(none)"}.`,
+						},
+					],
+					details: { role: params.role, planned: false, dryRun: true },
+				};
 			}
 			const taskId = freeTaskId(buffer, params.role);
 			buffer.tasks.push({ id: taskId, role: params.role, prompt: params.task });
@@ -398,7 +408,9 @@ const DRY_RUN_ADDENDUM = `
 You are in planning mode: spawn_agent and delegate_task record a plan instead of starting
 agents — nothing executes. Cover the whole goal. Give every agent a taskId, a concrete
 task, and deps listing the task ids whose results it needs; add retries for tasks likely
-to be flaky. When the plan covers the goal, summarize it briefly and stop.`;
+to be flaky. Always create a role with spawn_agent before any delegate_task for it; never
+delegate_task to a role you have not spawned in this plan. When the plan covers the goal,
+summarize it briefly and stop.`;
 
 /**
  * Render the configured team as a roster the planner can route by. Categories

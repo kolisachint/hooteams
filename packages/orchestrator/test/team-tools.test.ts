@@ -343,11 +343,16 @@ describe("per-role tools", () => {
 		expect(planner.planBuffer!.tasks.at(-1)?.id).toBe("t-code-2");
 		expect(planner.planBuffer!.roles.map((role) => role.role)).toEqual(["coder", "tester"]);
 
-		// delegate_task plans a task for an existing role and rejects unknown ones
+		// delegate_task plans a task for an existing role
 		const delegateTool = planner.agent.state.tools.find((tool) => tool.name === "delegate_task")!;
 		await delegateTool.execute("call-4", { role: "tester", task: "re-test it" } as any);
 		expect(planner.planBuffer!.tasks.at(-1)).toMatchObject({ id: "tester", role: "tester", prompt: "re-test it" });
-		expect(delegateTool.execute("call-5", { role: "ghost", task: "anything" } as any)).rejects.toThrow(/No planned agent/);
+		// an unplanned role returns a soft hint (not a thrown failure) and records nothing
+		const tasksBefore = planner.planBuffer!.tasks.length;
+		const hint = await delegateTool.execute("call-5", { role: "ghost", task: "anything" } as any);
+		expect(hint.details).toMatchObject({ role: "ghost", planned: false });
+		expect(JSON.stringify(hint.content)).toContain("spawn_agent");
+		expect(planner.planBuffer!.tasks.length).toBe(tasksBefore);
 	});
 
 	test("agents spawned with team parameter get delegate_task tool", async () => {

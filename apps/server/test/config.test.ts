@@ -29,6 +29,7 @@ describe("loadConfig discovery", () => {
 			const config = await loadConfig();
 			expect(config.team.map((r) => r.role)).toEqual(["fromTeamJson"]);
 		} finally {
+			process.chdir(originalCwd); // leave the dir before removing it (Windows EBUSY)
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
@@ -44,6 +45,7 @@ describe("loadConfig discovery", () => {
 			const config = await loadConfig();
 			expect(config.team.map((r) => r.role)).toEqual(["legacy"]);
 		} finally {
+			process.chdir(originalCwd); // leave the dir before removing it (Windows EBUSY)
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
@@ -54,6 +56,7 @@ describe("loadConfig discovery", () => {
 			process.chdir(dir);
 			expect((await loadConfig()).team).toEqual([]);
 		} finally {
+			process.chdir(originalCwd); // leave the dir before removing it (Windows EBUSY)
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
