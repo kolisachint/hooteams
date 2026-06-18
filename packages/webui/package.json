@@ -1,6 +1,6 @@
 {
 	"name": "@kolisachint/hooteams-webui",
-	"version": "0.1.28",
+	"version": "0.1.29",
 	"description": "hooteams web UI: live team mission control (SSE stream view + DAG replay), served by `hooteams start`",
 	"type": "module",
 	"main": "./serve.ts",
