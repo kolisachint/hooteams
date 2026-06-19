@@ -225,6 +225,10 @@ button {
 .conn[data-conn="connecting"] .dot {
 	background: var(--ink-4);
 }
+.conn[data-conn="log"] .dot {
+	background: var(--ink-4);
+	animation: none;
+}
 @keyframes ping {
 	0% {
 		box-shadow: 0 0 0 0 color-mix(in oklab, var(--ok) 60%, transparent);
@@ -330,6 +334,33 @@ button {
 	min-width: 0;
 	min-height: 0;
 }
+/* "viewing from log" banner — shown when a finished run is rendered from its
+   on-disk JSONL rather than the live stream. */
+.tg-banner {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px var(--s-4);
+	font-size: var(--fs-sm);
+	border-bottom: 1px solid var(--line);
+	flex: 0 0 auto;
+}
+.tg-banner.done {
+	background: var(--info-soft);
+	color: var(--info);
+}
+.tg-banner.abort {
+	background: var(--err-soft);
+	color: var(--err);
+}
+.tg-banner-ic {
+	display: inline-flex;
+}
+.tg-banner-path {
+	color: var(--ink-4);
+	font-family: var(--font-mono, monospace);
+}
+
 .stage-bar {
 	display: flex;
 	align-items: center;

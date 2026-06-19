@@ -1,4 +1,4 @@
-import type { DagNode, DagState, PendingApproval, RunInfo, SessionEntry } from "./types";
+import type { DagNode, DagState, PendingApproval, RunInfo, SessionEntry, TeamConfig } from "./types";
 
 /**
  * Parse a JSONL session file content into a RunInfo.
@@ -12,6 +12,7 @@ export function parseSession(jsonl: string): RunInfo | null {
 	let status: RunInfo["status"] = "running";
 	let startedAt: number | undefined;
 	let endedAt: number | undefined;
+	let teamConfig: TeamConfig | undefined;
 	// Gates opened (approval_request) minus those answered (approval_response).
 	// What's left is still awaiting a decision at the end of the session — a
 	// marker-driven pause can land on any node, not just statically-gated ones.
@@ -55,6 +56,17 @@ export function parseSession(jsonl: string): RunInfo | null {
 			case "run_start": {
 				runId = data.runId ?? runId;
 				startedAt = data.ts;
+				break;
+			}
+
+			case "team_config": {
+				runId = data.runId ?? runId;
+				teamConfig = {
+					defaults: data.defaults,
+					maxConcurrent: data.maxConcurrent,
+					validator: data.validator,
+					roles: Array.isArray(data.roles) ? data.roles : [],
+				};
 				break;
 			}
 
@@ -139,6 +151,7 @@ export function parseSession(jsonl: string): RunInfo | null {
 		startedAt,
 		endedAt,
 		pending: Object.keys(pending).length > 0 ? pending : undefined,
+		teamConfig,
 	};
 }
 
@@ -208,14 +221,22 @@ export async function fetchSession(runId: string, host: string): Promise<RunInfo
 	return null;
 }
 
+/** A run's persisted log: `filename` is relative to the sessions dir, `path` is absolute. */
+export interface SessionListItem {
+	runId: string;
+	filename: string;
+	/** Absolute on-disk path, surfaced by newer servers (undefined on older ones). */
+	path?: string;
+}
+
 /**
  * List available sessions from the server.
  */
-export async function listSessions(host: string): Promise<Array<{ runId: string; filename: string }>> {
+export async function listSessions(host: string): Promise<SessionListItem[]> {
 	try {
 		const resp = await fetch(`${host}/sessions`);
 		if (resp.ok) {
-			return (await resp.json()) as Array<{ runId: string; filename: string }>;
+			return (await resp.json()) as SessionListItem[];
 		}
 	} catch {
 		// Continue

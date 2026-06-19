@@ -5,6 +5,7 @@
 @import "./design/tokens.css";
 @import "./design/cockpit.css";
 @import "./design/views.css";
+@import "./design/sidebar.css";
 
 #root {
 	position: relative;

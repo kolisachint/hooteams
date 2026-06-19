@@ -22,6 +22,7 @@ const RUN_PILL: Record<MissionState["run"]["status"], string> = {
 export function StagesView({
 	mission,
 	connection,
+	logPath,
 	elapsedSec,
 	view,
 	setView,
@@ -34,6 +35,8 @@ export function StagesView({
 }: {
 	mission: MissionState;
 	connection: ConnectionStatus;
+	/** When set, the run is finished and rendered from its on-disk log, not the live stream. */
+	logPath?: string | null;
 	elapsedSec: number;
 	view: StageLayout;
 	setView: (v: StageLayout) => void;
@@ -47,6 +50,7 @@ export function StagesView({
 	const { run } = mission;
 	const timings = useMemo(() => taskTimings(events), [events]);
 	const feedRoles = useMemo(() => [...new Set(events.map((e) => e.role))], [events]);
+	const fromLog = !!logPath;
 
 	return (
 		<div className="app stages">
@@ -65,9 +69,9 @@ export function StagesView({
 							<i className="dot" />
 							{run.status}
 						</span>
-						<span className="conn" data-conn={connection}>
+						<span className="conn" data-conn={fromLog ? "log" : connection}>
 							<i className="dot" />
-							{connection}
+							{fromLog ? "log" : connection}
 						</span>
 					</div>
 					<div className="goal-text" title={run.goal}>
@@ -103,6 +107,17 @@ export function StagesView({
 			</header>
 
 			<main className="stage">
+				{fromLog && (
+					<div className={`tg-banner ${run.status === "error" ? "abort" : "done"}`}>
+						<span className="tg-banner-ic">
+							<Icon name={run.status === "error" ? "alert" : "info"} size={14} />
+						</span>
+						<span className="tg-banner-text">
+							{run.status === "error" ? "Run aborted" : "Run ended"} — viewing from log
+							<span className="tg-banner-path"> · {logPath}</span>
+						</span>
+					</div>
+				)}
 				<div className="stage-bar">
 					<div className="seg">
 						<button type="button" className={view === "graph" ? "on" : ""} onClick={() => setView("graph")}>
@@ -120,7 +135,9 @@ export function StagesView({
 					</div>
 					<div className="spacer" />
 					{view === "feed" ? (
-						<span className="stage-count">{events.length} events · live</span>
+						<span className="stage-count">
+							{events.length} events · {fromLog ? "from log" : "live"}
+						</span>
 					) : (
 						<div className="legend">
 							<span>

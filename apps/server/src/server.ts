@@ -119,6 +119,24 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		return [...config.team, ...extraRoles.filter((role) => !configured.has(role.role))];
 	};
 
+	// The serializable team config the web UI's Config view reads (via GET /config
+	// for the live run, or the run's persisted `team_config` log entry for a
+	// finished one). The SSE stream carries none of this static setup.
+	const webTeamConfig = (roles: RoleConfig[]) => ({
+		defaults: config.defaults,
+		maxConcurrent: config.maxConcurrent,
+		validator: config.validator,
+		roles: roles.map((role) => ({
+			role: role.role,
+			model: role.model,
+			provider: role.provider,
+			category: role.category,
+			thinkingLevel: role.thinkingLevel,
+			defaultTools: role.defaultTools,
+			systemPrompt: role.systemPrompt,
+		})),
+	});
+
 	// A permanently failed task (retries exhausted) is steered to the planner
 	// agent, when one is configured, for structural recovery: it can spawn a
 	// specialist with spawn_agent or re-delegate with delegate_task.
@@ -208,6 +226,9 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		// Task prompts, goal, and per-run roles live only in this request;
 		// persist them so a restored run re-dispatches with the real config.
 		await session.appendCustomEntry("run_config", { runId, tasks: request.tasks, goal: request.goal, roles: request.roles });
+		// Snapshot the effective team config so a finished run shows the config it
+		// actually ran with (the live GET /config may have changed since).
+		await session.appendCustomEntry("team_config", { runId, ...webTeamConfig(mergeRoles(request.roles)) });
 		const orchestrator = new TeamOrchestrator(dag, {
 			session,
 			...orchestratorOptions(runId, request.tasks, request.goal, request.roles, await runMemoryFor()),
@@ -254,7 +275,12 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		void orchestrator.run();
 	};
 
-	const router = createRouter(team, channel, bridge, { hitl: () => activeRun, startRun, sessionsRoot });
+	const router = createRouter(team, channel, bridge, {
+		hitl: () => activeRun,
+		startRun,
+		sessionsRoot,
+		teamConfig: webTeamConfig(config.team),
+	});
 
 	// API paths own their responses (including their own 404s, e.g. "no active
 	// run"); only genuinely unrouted GETs fall through to the web UI shell.
@@ -263,6 +289,7 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 		return (
 			clean === "/health" ||
 			clean === "/status" ||
+			clean === "/config" ||
 			clean === "/steer" ||
 			clean === "/stop" ||
 			clean === "/runs" ||
