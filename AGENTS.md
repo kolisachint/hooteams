@@ -138,6 +138,28 @@ Two parallel sinks from the orchestrator:
 > Rule of thumb: if a new signal must show up **live**, add it to the `publish`
 > path *and* (usually) the `persist` path so replay stays faithful.
 
+### Live = SSE, history = file (don't clog the live pipe)
+
+A hard rule for *where data comes from*, so SSE and the HTTP API stay cheap:
+
+- **Live run → SSE only.** The single active run streams over `GET /events`.
+  The web UI calls `connect()` with no runId (`packages/webui/src/lib/stream.ts`).
+- **Previous runs → the file/HTTP API, never SSE.** Replay reads the persisted
+  JSONL: `GET /sessions/:runId` (full log → `lib/session.ts`) for the one run
+  being viewed, and `GET /sessions` for the **list**. Never stream a finished
+  run back through the channel.
+- **List views read summaries, not whole files.** `GET /sessions` folds a cheap
+  server-side digest (goal/status/done/total/startedAt) into each row via
+  `summarizeSession` (`packages/bridge/src/session-summary.ts`), so the sidebar
+  renders the run list from **one** call. Do **not** fetch + parse every session
+  file from the client to build a list — that's an N+1 storm. Only an explicit
+  replay (opening one run) fetches that run's full file.
+
+> When adding any history/list feature: read it from the file API and, if it's a
+> list, extend the `/sessions` summary rather than fetching each run's full log.
+> Keep `summarizeSession` (server) in sync with `parseSession` (web UI) when the
+> persisted shape changes.
+
 ---
 
 ## 4. Wire-format rules (do not break consumers)

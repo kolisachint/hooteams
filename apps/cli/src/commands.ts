@@ -386,17 +386,45 @@ interface ScaffoldFile {
 	content: string;
 }
 
+/**
+ * A cheaper/faster model for the "quick" tier, keyed by the discovered provider.
+ * Tiering the reviewer onto a smaller model is what the `quick` category signals;
+ * unknown providers fall back to the default model (no tiering, but still valid).
+ */
+const QUICK_TIER_MODEL: Record<string, string> = {
+	anthropic: "claude-haiku-4-5",
+	openai: "gpt-5-mini",
+};
+
+/** The default goal validator scaffolded into team.json so every run self-checks. */
+const SCAFFOLD_VALIDATOR =
+	"You are a strict reviewer. Given the team's goal and every task's output, judge whether the goal was actually achieved — completed tasks alone do not prove it. Only declare success when the goal is genuinely met.";
+
 /** Render the scaffold team.json, wiring in the discovered hoocode model defaults. */
 function buildTeamJson(): string {
+	const defaults = discoverHoocodeDefaults();
+	// Tier the cheap "quick" role down when we know a smaller model for the provider;
+	// otherwise leave it on the default model so the config stays valid for any provider.
+	const quickModel = QUICK_TIER_MODEL[defaults.provider];
 	return `${JSON.stringify(
 		{
-			defaults: discoverHoocodeDefaults(),
+			defaults,
 			maxConcurrent: 3,
 			rulesDir: ".agents/teams/rules",
+			validator: SCAFFOLD_VALIDATOR,
 			team: [
-				{ role: "planner", category: "plan", systemPrompt: "You are the planner. Break the goal into tasks and coordinate the team." },
+				// The planner gets the coding tools so it can read the repo while planning,
+				// instead of breaking the goal down blind.
+				{ role: "planner", category: "plan", defaultTools: true, systemPrompt: "You are the planner. Break the goal into tasks and coordinate the team." },
 				{ role: "coder", category: "deep", defaultTools: true, systemPrompt: "You are the coder. Implement tasks one at a time, with tests." },
-				{ role: "reviewer", category: "quick", defaultTools: true, systemPrompt: "You are the reviewer. Check the work against the goal and flag gaps." },
+				{
+					role: "reviewer",
+					category: "quick",
+					defaultTools: true,
+					// Tiered onto a cheaper model when one is known for the provider.
+					...(quickModel ? { model: quickModel } : {}),
+					systemPrompt: "You are the reviewer. Check the work against the goal and flag gaps.",
+				},
 			],
 		},
 		null,

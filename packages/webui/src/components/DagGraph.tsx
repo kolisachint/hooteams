@@ -1,5 +1,5 @@
 /** Task DAG as HTML nodes overlaid on SVG dependency edges, plus a run-map. */
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { type GraphLayout, layout, type MissionTask } from "../lib/mission";
 import { STAT_LABEL, statColor } from "../lib/roles";
 
@@ -41,7 +41,7 @@ function Minimap({ L, taskList }: { L: GraphLayout; taskList: MissionTask[] }) {
 	);
 }
 
-export function DagGraph({
+function DagGraphImpl({
 	taskList,
 	selectedId,
 	onSelect,
@@ -105,3 +105,43 @@ export function DagGraph({
 		</div>
 	);
 }
+
+/**
+ * A streaming agent re-renders the cockpit on every token delta (the store
+ * rebuilds the agents map per frame), but the task graph only changes when a
+ * node's *visible* fields do. Memoize on a content signature of those fields so
+ * the paint-heavy running-node glow/marquee animations aren't restarted ~60×/s —
+ * that re-render-under-animation churn is the macOS compositing flicker.
+ */
+function sameTaskList(a: MissionTask[], b: MissionTask[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		const x = a[i]!;
+		const y = b[i]!;
+		if (
+			x.id !== y.id ||
+			x.role !== y.role ||
+			x.label !== y.label ||
+			x.status !== y.status ||
+			x.progress !== y.progress ||
+			x.indeterminate !== y.indeterminate ||
+			x.retries !== y.retries ||
+			x.gate !== y.gate ||
+			x.advisor !== y.advisor ||
+			x.deps.length !== y.deps.length ||
+			x.deps.some((d, j) => d !== y.deps[j])
+		) {
+			return false;
+		}
+	}
+	return true;
+}
+
+export const DagGraph = memo(
+	DagGraphImpl,
+	(prev, next) =>
+		prev.selectedId === next.selectedId &&
+		prev.showMinimap === next.showMinimap &&
+		prev.onSelect === next.onSelect &&
+		sameTaskList(prev.taskList, next.taskList),
+);

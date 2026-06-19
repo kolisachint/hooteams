@@ -25,6 +25,12 @@ interface Store {
 	setConnection: (status: ConnectionStatus) => void;
 	dispatch: (event: TeamEvent) => void;
 	/**
+	 * Fold a batch of events in a single state update. The SSE stream coalesces
+	 * per-frame so a burst of token deltas triggers one re-render instead of
+	 * dozens — this is what stops the Mac compositing flicker under streaming.
+	 */
+	dispatchMany: (events: TeamEvent[]) => void;
+	/**
 	 * Replace the run from a parsed session (replay mode). Pass keepEvents when
 	 * backfilling a still-displayed live run from its log so the activity feed
 	 * gathered from the stream isn't wiped.
@@ -189,6 +195,34 @@ function updateTool(
 	return tools.map((tool) => (tool.toolCallId === toolCallId ? { ...tool, ...patch } : tool));
 }
 
+/**
+ * Fold one wire event into the store slices, returning the next state. Pure so
+ * a batch of events can be folded in a single `set` (see dispatchMany) without
+ * a re-render per event.
+ */
+function applyEvent(state: Store, event: TeamEvent): Store {
+	// A dag_snapshot with a fresh runId starts a new run: clear the previous
+	// run's events/pending/agents so stale timings (and a carried-over
+	// startedAt/status) don't bleed across runs — e.g. `work … --keep`.
+	const isNewRun = event.type === "dag_snapshot" && state.runInfo != null && event.runId !== state.runInfo.runId;
+	const prevRunInfo = isNewRun ? null : state.runInfo;
+	const prevPending = isNewRun ? {} : state.pending;
+	const prevEvents = isNewRun ? [] : state.events;
+	const prevAgents = isNewRun ? new Map<string, AgentState>() : state.agents;
+
+	const runInfo = reduceRun(prevRunInfo, event);
+	const pending = reducePending(prevPending, event);
+	const line = feedFor(event);
+	const events = line ? [...prevEvents, line].slice(-MAX_FEED) : prevEvents;
+	// Run/dag-level events (role "orchestrator") drive the task graph only —
+	// they must not spawn an agent card.
+	if (event.role === "orchestrator") return { ...state, runInfo, pending, events, agents: prevAgents };
+	const agents = new Map(prevAgents);
+	const current = agents.get(event.role) ?? emptyAgent(event.role, event.agentId);
+	agents.set(event.role, reduce(current, event));
+	return { ...state, agents, runInfo, pending, events };
+}
+
 /** The single reducer: every SSE event flows through here. */
 function reduce(agent: AgentState, event: TeamEvent): AgentState {
 	const next: AgentState = { ...agent, agentId: event.agentId, lastEventTs: event.ts };
@@ -290,28 +324,12 @@ export const useStore = create<Store>((set) => ({
 			events: opts?.keepEvents ? state.events : [],
 			pending: runInfo.pending ?? {},
 		})),
-	dispatch: (event) =>
+	dispatch: (event) => set((state) => applyEvent(state, event)),
+	dispatchMany: (batch) =>
 		set((state) => {
-			// A dag_snapshot with a fresh runId starts a new run: clear the previous
-			// run's events/pending/agents so stale timings (and a carried-over
-			// startedAt/status) don't bleed across runs — e.g. `work … --keep`.
-			const isNewRun =
-				event.type === "dag_snapshot" && state.runInfo != null && event.runId !== state.runInfo.runId;
-			const prevRunInfo = isNewRun ? null : state.runInfo;
-			const prevPending = isNewRun ? {} : state.pending;
-			const prevEvents = isNewRun ? [] : state.events;
-			const prevAgents = isNewRun ? new Map<string, AgentState>() : state.agents;
-
-			const runInfo = reduceRun(prevRunInfo, event);
-			const pending = reducePending(prevPending, event);
-			const line = feedFor(event);
-			const events = line ? [...prevEvents, line].slice(-MAX_FEED) : prevEvents;
-			// Run/dag-level events (role "orchestrator") drive the task graph only —
-			// they must not spawn an agent card.
-			if (event.role === "orchestrator") return { runInfo, pending, events, agents: prevAgents };
-			const agents = new Map(prevAgents);
-			const current = agents.get(event.role) ?? emptyAgent(event.role, event.agentId);
-			agents.set(event.role, reduce(current, event));
-			return { agents, runInfo, pending, events };
+			if (batch.length === 0) return state;
+			let next = state;
+			for (const event of batch) next = applyEvent(next, event);
+			return next;
 		}),
 }));

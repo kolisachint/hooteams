@@ -5,11 +5,14 @@
  * backend: hooteams runs one orchestrator per process (no multi-project
  * concept), so this renders a flat, searchable run list instead of nested
  * project groups. The live run comes from the store (no extra fetch); every
- * other row is read from the session JSONL files via fetchSession/listSessions.
+ * other row comes from the server's GET /sessions summary in a single call —
+ * the server reads each log once and folds in goal/status/done/total/startedAt,
+ * so the sidebar never fetches or parses individual session files (only an
+ * explicit replay, in app.tsx, reads a full file). Live = SSE, history = file.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { humanize } from "../lib/roles";
-import { fetchSession, listSessions } from "../lib/session";
+import { listSessions, type SessionListItem } from "../lib/session";
 import { useStore } from "../lib/store";
 import { fetchStatus, HOOTEAMS_HOST, HOOTEAMS_HOST_LABEL } from "../lib/stream";
 import type { RunInfo } from "../lib/types";
@@ -46,7 +49,8 @@ function taskCounts(dag: RunInfo["dag"]): { done: number; total: number } {
 	return { done: nodes.filter((n) => n.status === "done").length, total: nodes.length };
 }
 
-function toRow(runId: string, info: RunInfo, isLive: boolean): RunRow {
+/** Row for the live run, built from the store's runInfo (no fetch). */
+function liveRow(runId: string, info: RunInfo): RunRow {
 	const { done, total } = taskCounts(info.dag);
 	return {
 		runId,
@@ -55,7 +59,20 @@ function toRow(runId: string, info: RunInfo, isLive: boolean): RunRow {
 		done,
 		total,
 		startedAt: info.startedAt,
-		isLive,
+		isLive: true,
+	};
+}
+
+/** Row for a historical run, built from the server's GET /sessions summary. */
+function summaryRow(s: SessionListItem): RunRow {
+	return {
+		runId: s.runId,
+		title: s.goal || humanize(s.runId),
+		status: s.status ?? "done",
+		done: s.done ?? 0,
+		total: s.total ?? 0,
+		startedAt: s.startedAt,
+		isLive: false,
 	};
 }
 
@@ -71,27 +88,16 @@ export function Sidebar({
 	const runInfo = useStore((s) => s.runInfo);
 	const connection = useStore((s) => s.connection);
 	const [q, setQ] = useState("");
-	const [history, setHistory] = useState<Record<string, RunInfo>>({});
+	const [history, setHistory] = useState<SessionListItem[]>([]);
 	const [agentStatus, setAgentStatus] = useState<Record<string, { status: string }>>({});
 	const searchRef = useRef<HTMLInputElement>(null);
 
-	// Backfill every other session's real goal/status/dag from its JSONL log.
+	// The history rows come straight from the server's GET /sessions summary —
+	// one call, no per-file fetch/parse (the server already read each log once).
 	useEffect(() => {
 		let cancelled = false;
-		listSessions(HOOTEAMS_HOST).then(async (sessions) => {
-			const entries = await Promise.all(
-				sessions.map(async (s) => {
-					if (s.runId === runInfo?.runId) return null;
-					const info = await fetchSession(s.runId, HOOTEAMS_HOST).catch(() => null);
-					return info ? ([s.runId, info] as const) : null;
-				}),
-			);
-			if (cancelled) return;
-			setHistory((prev) => {
-				const next = { ...prev };
-				for (const entry of entries) if (entry) next[entry[0]] = entry[1];
-				return next;
-			});
+		listSessions(HOOTEAMS_HOST).then((sessions) => {
+			if (!cancelled) setHistory(sessions);
 		});
 		return () => {
 			cancelled = true;
@@ -129,14 +135,18 @@ export function Sidebar({
 	}, []);
 
 	const rows = useMemo(() => {
-		// Merge by runId so the freshest copy wins: once replay swaps the store's
-		// runInfo to a historical run, it overwrites that run's cached history
-		// entry instead of appearing a second time as its own row.
-		const merged: Record<string, RunInfo> = { ...history };
-		if (runInfo) merged[runInfo.runId] = runInfo;
-		const list = Object.entries(merged).map(([runId, info]) =>
-			toRow(runId, info, runId === runInfo?.runId && !selectedRunId),
-		);
+		// Merge by runId so the freshest copy wins: the store's live runInfo (which
+		// has up-to-the-second counts) overrides the same run's GET /sessions
+		// summary, instead of the run appearing twice.
+		const byId = new Map<string, RunRow>();
+		for (const s of history) byId.set(s.runId, summaryRow(s));
+		if (runInfo) {
+			// The live runInfo is the "live" row only when nothing is selected for
+			// replay; otherwise it's just the freshest copy of a historical row.
+			const row = liveRow(runInfo.runId, runInfo);
+			byId.set(runInfo.runId, selectedRunId ? { ...row, isLive: false } : row);
+		}
+		const list = [...byId.values()];
 		list.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
 		return list;
 	}, [runInfo, history, selectedRunId]);

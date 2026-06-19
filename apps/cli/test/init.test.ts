@@ -42,6 +42,12 @@ describe("init", () => {
 		expect(teamJson.team.map((r: { role: string }) => r.role)).toEqual(["planner", "coder", "reviewer"]);
 		expect(teamJson.rulesDir).toBe(".agents/teams/rules");
 		expect(teamJson.team[0].category).toBe("plan");
+		// the planner can read the repo while planning
+		expect(teamJson.team[0].defaultTools).toBe(true);
+		// every run self-checks against a scaffolded validator
+		expect(typeof teamJson.validator).toBe("string");
+		// the cheap "quick" reviewer is tiered onto a smaller model for known providers
+		expect(teamJson.team[2].model).toBe("claude-haiku-4-5");
 
 		expect(await Bun.file(join(cwd, ".agents", "teams", "rules", "00-style.md")).text()).toContain("Project rules");
 		// AGENTS.md lives in the rules dir so it is injected into prompts

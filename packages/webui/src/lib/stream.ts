@@ -22,6 +22,32 @@ let stopped = false;
 const MAX_BACKOFF_MS = 30_000;
 let currentRunId: string | undefined;
 
+// Per-frame coalescing of incoming events. A streaming agent emits token deltas
+// far faster than the screen refreshes; dispatching each one separately forces a
+// re-render per token, which on macOS shows up as rapid flicker of the animated
+// run nodes (GPU compositing repaints under the storm). We buffer events and
+// flush the whole batch once per animation frame, collapsing a burst of deltas
+// into a single state update + render.
+let pendingEvents: TeamEvent[] = [];
+let flushHandle: number | undefined;
+
+function flushEvents(): void {
+	flushHandle = undefined;
+	if (pendingEvents.length === 0) return;
+	const batch = pendingEvents;
+	pendingEvents = [];
+	useStore.getState().dispatchMany(batch);
+}
+
+function queueEvent(event: TeamEvent): void {
+	pendingEvents.push(event);
+	if (flushHandle !== undefined) return;
+	flushHandle =
+		typeof requestAnimationFrame === "function"
+			? requestAnimationFrame(flushEvents)
+			: (setTimeout(flushEvents, 16) as unknown as number);
+}
+
 /**
  * Connect to the HooTeams SSE stream. Native EventSource retries on its own,
  * but gives up on some failures (e.g. server down at page load), so we manage
@@ -45,7 +71,7 @@ function open(host: string, runId?: string): void {
 
 	source.onmessage = (event) => {
 		try {
-			useStore.getState().dispatch(JSON.parse(event.data) as TeamEvent);
+			queueEvent(JSON.parse(event.data) as TeamEvent);
 		} catch {
 			// Malformed frame — skip rather than tear down the stream.
 		}
@@ -65,6 +91,13 @@ function open(host: string, runId?: string): void {
 export function disconnect(): void {
 	stopped = true;
 	clearTimeout(reconnectTimer);
+	if (flushHandle !== undefined) {
+		if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(flushHandle);
+		else clearTimeout(flushHandle);
+		flushHandle = undefined;
+	}
+	// Drain anything buffered so a reconnect doesn't replay stale deltas.
+	pendingEvents = [];
 	source?.close();
 	source = undefined;
 }

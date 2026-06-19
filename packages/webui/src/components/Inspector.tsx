@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { MissionState, MissionTask } from "../lib/mission";
 import { isLive, roleInfo, STAT_LABEL, statColor } from "../lib/roles";
+import { fetchTranscript } from "../lib/session";
 import { useStore } from "../lib/store";
-import type { PendingApproval } from "../lib/types";
+import { HOOTEAMS_HOST } from "../lib/stream";
+import type { PendingApproval, TranscriptEntry } from "../lib/types";
 import { Icon } from "./Icon";
 import { LiveTurn, TranscriptTurn } from "./TranscriptTurn";
 
@@ -25,20 +27,43 @@ export function Inspector({
 }) {
 	const [tab, setTab] = useState<Tab>("detail");
 	const streamRef = useRef<HTMLDivElement>(null);
+	const [loadedTranscript, setLoadedTranscript] = useState<TranscriptEntry[] | null>(null);
+	const [transcriptLoading, setTranscriptLoading] = useState(false);
 	const task: MissionTask | undefined = sel ? mission.tasks[sel] : undefined;
 	const role = task?.role ?? "";
 	const agent = mission.agents[role];
 	const rawAgent = useStore((s) => (role ? s.agents.get(role) : undefined));
 
+	// Reset loaded transcript when selection changes
 	useEffect(() => {
 		setTab("detail");
+		setLoadedTranscript(null);
+		setTranscriptLoading(false);
 	}, [sel]);
+
+	// Lazy-load transcript for completed runs when the transcript tab is clicked
+	useEffect(() => {
+		if (
+			tab === "transcript" &&
+			task &&
+			!agent?.transcript.length &&
+			!agent?.live &&
+			mission.run.status !== "running" &&
+			!loadedTranscript &&
+			!transcriptLoading
+		) {
+			setTranscriptLoading(true);
+			fetchTranscript(mission.run.runId, task.id, HOOTEAMS_HOST)
+				.then((entries) => setLoadedTranscript(entries))
+				.finally(() => setTranscriptLoading(false));
+		}
+	}, [tab, task, agent, mission.run, loadedTranscript, transcriptLoading]);
 
 	useEffect(() => {
 		if (tab === "transcript" && streamRef.current) {
 			streamRef.current.scrollTop = streamRef.current.scrollHeight;
 		}
-	}, [tab, agent?.transcript.length, agent?.streamBuffer]);
+	}, [tab, agent?.transcript.length, agent?.streamBuffer, loadedTranscript]);
 
 	if (!task) return <aside className="inspector" aria-hidden="true" />;
 
@@ -114,6 +139,16 @@ export function Inspector({
 								/>
 							)}
 						</>
+					) : loadedTranscript && loadedTranscript.length > 0 ? (
+						<>
+							{loadedTranscript.map((entry, i) => (
+								<TranscriptTurn key={i} entry={entry} role={role} />
+							))}
+						</>
+					) : transcriptLoading ? (
+						<div className="av-empty">
+							<span className="term think">loading transcript…</span>
+						</div>
 					) : (
 						<div className="av-empty">
 							<span className="term think">{role} hasn't produced any output yet.</span>

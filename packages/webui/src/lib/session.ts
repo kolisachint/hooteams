@@ -1,4 +1,13 @@
-import type { DagNode, DagState, PendingApproval, RunInfo, SessionEntry, TeamConfig } from "./types";
+import type {
+	DagNode,
+	DagState,
+	PendingApproval,
+	RunInfo,
+	SessionEntry,
+	TeamConfig,
+	ToolChipState,
+	TranscriptEntry,
+} from "./types";
 
 /**
  * Parse a JSONL session file content into a RunInfo.
@@ -221,12 +230,24 @@ export async function fetchSession(runId: string, host: string): Promise<RunInfo
 	return null;
 }
 
-/** A run's persisted log: `filename` is relative to the sessions dir, `path` is absolute. */
+/**
+ * A run's persisted log as `GET /sessions` reports it: `filename` is relative to
+ * the sessions dir, `path` is absolute. Newer servers also fold in a cheap
+ * server-side summary (goal/status/done/total/startedAt) so the web UI can
+ * render its run list from this single call without fetching and parsing every
+ * session file itself. The summary fields are optional for back-compat with
+ * older servers that list ids only.
+ */
 export interface SessionListItem {
 	runId: string;
 	filename: string;
 	/** Absolute on-disk path, surfaced by newer servers (undefined on older ones). */
 	path?: string;
+	goal?: string;
+	status?: RunInfo["status"];
+	done?: number;
+	total?: number;
+	startedAt?: number;
 }
 
 /**
@@ -242,4 +263,127 @@ export async function listSessions(host: string): Promise<SessionListItem[]> {
 		// Continue
 	}
 	return [];
+}
+
+// ── Lazy transcript loading ───────────────────────────────────────────────────
+
+/** In-memory cache: runId:taskId → transcript entries, so re-clicks are instant. */
+const transcriptCache = new Map<string, TranscriptEntry[]>();
+
+/**
+ * Parse an agent session JSONL (type: "message" entries) into TranscriptEntry[].
+ * Each message pair (user + assistant) becomes one turn entry with text, thinking,
+ * tool calls, and usage stats.
+ */
+function parseAgentSession(jsonl: string): TranscriptEntry[] {
+	const lines = jsonl.trim().split("\n").filter(Boolean);
+	const entries: TranscriptEntry[] = [];
+	let currentTurn: {
+		text: string;
+		thinking: string;
+		tools: ToolChipState[];
+		usage?: { input?: number; output?: number; totalTokens?: number; cost?: { total?: number } };
+		error?: string;
+	} | null = null;
+
+	for (const line of lines) {
+		let entry: { type?: string; message?: Record<string, any> };
+		try {
+			entry = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		if (entry.type !== "message" || !entry.message) continue;
+		const msg = entry.message;
+
+		if (msg.role === "user") {
+			// Steer/nudge messages from the user mid-run
+			const text = msg.content?.map((c: any) => c.text ?? "").join("") ?? "";
+			if (text) entries.push({ kind: "nudge", text });
+		} else if (msg.role === "assistant") {
+			const textParts: string[] = [];
+			const thinkingParts: string[] = [];
+			const tools: ToolChipState[] = [];
+
+			for (const block of msg.content ?? []) {
+				if (block.type === "text") {
+					textParts.push(block.text ?? "");
+				} else if (block.type === "thinking") {
+					thinkingParts.push(block.thinking ?? "");
+				} else if (block.type === "toolCall") {
+					tools.push({
+						toolCallId: block.id ?? "",
+						toolName: block.name ?? "unknown",
+						status: "done",
+						args: block.arguments,
+					});
+				}
+			}
+
+			// If this assistant message follows a previous one, flush the previous turn
+			if (currentTurn) {
+				entries.push({
+					kind: "turn",
+					text: currentTurn.text,
+					thinking: currentTurn.thinking,
+					tools: currentTurn.tools,
+					usage: currentTurn.usage,
+					error: currentTurn.error,
+				});
+			}
+
+			currentTurn = {
+				text: textParts.join(""),
+				thinking: thinkingParts.join(""),
+				tools,
+				usage: msg.usage,
+			};
+		} else if (msg.role === "toolResult") {
+			// Attach tool results to the current turn's tools
+			if (currentTurn) {
+				const tool = currentTurn.tools.find((t) => t.toolCallId === msg.toolCallId);
+				if (tool) {
+					tool.status = msg.isError ? "error" : "done";
+					tool.result = { content: msg.content, details: msg.details, isError: msg.isError };
+				}
+			}
+		}
+	}
+
+	// Flush the last turn
+	if (currentTurn) {
+		entries.push({
+			kind: "turn",
+			text: currentTurn.text,
+			thinking: currentTurn.thinking,
+			tools: currentTurn.tools,
+			usage: currentTurn.usage,
+			error: currentTurn.error,
+		});
+	}
+
+	return entries;
+}
+
+/**
+ * Fetch a single task's transcript from the server. Results are cached in memory
+ * so re-clicks are instant. Returns null if the transcript can't be loaded.
+ */
+export async function fetchTranscript(runId: string, taskId: string, host: string): Promise<TranscriptEntry[] | null> {
+	const cacheKey = `${runId}:${taskId}`;
+	const cached = transcriptCache.get(cacheKey);
+	if (cached) return cached;
+
+	try {
+		const resp = await fetch(
+			`${host}/sessions/${encodeURIComponent(runId)}/transcript/${encodeURIComponent(taskId)}`,
+		);
+		if (!resp.ok) return null;
+		const text = await resp.text();
+		const entries = parseAgentSession(text);
+		transcriptCache.set(cacheKey, entries);
+		return entries;
+	} catch {
+		return null;
+	}
 }
