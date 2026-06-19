@@ -1,4 +1,5 @@
 import type { RoleConfig, Team, TeamChannel } from "@kolisachint/hooteams-orchestrator";
+import { type SessionSummary, summarizeSession } from "./session-summary.js";
 import type { SSEBridge } from "./sse.js";
 
 const CORS_HEADERS = {
@@ -344,20 +345,78 @@ export function createRouter(team: Team, channel: TeamChannel, bridge: SSEBridge
 					return json({ error: "Sessions root not configured" }, 404);
 				}
 				try {
-					const { readdir } = await import("node:fs/promises");
+					const { readdir, readFile, stat } = await import("node:fs/promises");
 					const { join } = await import("node:path");
 					const files = await readdir(sessionsRoot, { recursive: true });
-					const sessions = files
+					const candidates = files
 						.filter((f): f is string => typeof f === "string" && f.endsWith(".jsonl") && f.includes("run-"))
 						.map((f) => {
 							const match = f.match(/run-([\w-]+)\.jsonl$/);
 							// `path` is absolute so the web UI can show exactly where the log lives.
-							return match ? { runId: match[1], filename: f, path: join(sessionsRoot, f) } : null;
+							return match ? { runId: match[1]!, filename: f, path: join(sessionsRoot, f) } : null;
 						})
 						.filter((s): s is { runId: string; filename: string; path: string } => s !== null);
+					// Read + summarize each log once, server-side, so the web UI can render
+					// its run list from a single call instead of fetching and fully parsing
+					// every session file itself (an N+1 request storm). Also carry the file
+					// mtime to sort newest-first (readdir order is filesystem-arbitrary).
+					const enriched = await Promise.all(
+						candidates.map(async (s) => {
+							let mtimeMs = 0;
+							let summary: SessionSummary | null = null;
+							try {
+								mtimeMs = (await stat(s.path)).mtimeMs;
+								summary = summarizeSession(await readFile(s.path, "utf-8"));
+							} catch {
+								// Unreadable/partial file: keep the row (id+path) but no summary,
+								// and sort it last rather than failing the whole list.
+							}
+							return { ...s, mtimeMs, summary };
+						}),
+					);
+					enriched.sort((a, b) => (b.summary?.startedAt ?? b.mtimeMs) - (a.summary?.startedAt ?? a.mtimeMs));
+					// mtime is an internal sort key; merge the summary fields inline so the
+					// response stays one flat object per run (back-compatible: runId,
+					// filename, path are unchanged; goal/status/done/total/startedAt added).
+					const sessions = enriched.map(({ mtimeMs: _mtimeMs, summary, ...rest }) => ({
+						...rest,
+						...(summary ?? {}),
+					}));
 					return json(sessions);
 				} catch {
 					return json({ error: "Failed to list sessions" }, 500);
+				}
+			}
+
+			// ── Task transcript (lazy-loaded from agent session files) ──
+			if (request.method === "GET" && /^\/sessions\/[^/]+\/transcript\/[^/]+$/.test(path)) {
+				const parts = path.split("/");
+				const runId = decodeURIComponent(parts[2]!);
+				const taskId = decodeURIComponent(parts[4]!);
+				if (!runId || !taskId) {
+					return json({ error: "Missing run ID or task ID" }, 400);
+				}
+				const sessionsRoot = routerOptions.sessionsRoot;
+				if (!sessionsRoot) {
+					return json({ error: "Sessions root not configured" }, 404);
+				}
+				try {
+					const { readdir, readFile } = await import("node:fs/promises");
+					const { join } = await import("node:path");
+					const files = await readdir(sessionsRoot, { recursive: true });
+					// Agent session files follow the pattern: {ts}_{runId}-{taskId}.jsonl
+					const agentFile = files
+						.filter((f): f is string => typeof f === "string" && f.endsWith(".jsonl"))
+						.find((f) => f.includes(`${runId}-${taskId}`) && !f.includes(`run-${runId}`));
+					if (!agentFile) {
+						return json({ error: `Transcript not found for task "${taskId}"` }, 404);
+					}
+					const content = await readFile(join(sessionsRoot, agentFile), "utf-8");
+					return new Response(content, {
+						headers: { ...CORS_HEADERS, "Content-Type": "text/plain; charset=utf-8" },
+					});
+				} catch {
+					return json({ error: "Failed to read transcript" }, 500);
 				}
 			}
 

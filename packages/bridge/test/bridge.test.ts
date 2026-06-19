@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	type AgentEvent,
 	type Subscribable,
@@ -372,5 +375,74 @@ describe("POST /runs", () => {
 
 		error = new Error("disk on fire");
 		expect((await post(base, { tasks: [{ id: "a", role: "ops" }] })).status).toBe(500);
+	});
+});
+
+describe("GET /sessions", () => {
+	test("lists session files newest-first by modification time", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "hooteams-sessions-"));
+		try {
+			// Three logs written oldest→newest, with explicit mtimes so order is
+			// deterministic regardless of readdir's filesystem-arbitrary order.
+			const oldPath = join(dir, "run-old.jsonl");
+			const midPath = join(dir, "run-mid.jsonl");
+			const newPath = join(dir, "run-new.jsonl");
+			await writeFile(oldPath, "{}\n");
+			await writeFile(midPath, "{}\n");
+			await writeFile(newPath, "{}\n");
+			const base = new Date("2020-01-01T00:00:00Z");
+			await utimes(oldPath, base, base);
+			await utimes(midPath, new Date(base.getTime() + 1000), new Date(base.getTime() + 1000));
+			await utimes(newPath, new Date(base.getTime() + 2000), new Date(base.getTime() + 2000));
+
+			const { base: url } = startServer({ sessionsRoot: dir });
+			const response = await fetch(`${url}/sessions`);
+			expect(response.status).toBe(200);
+			const sessions = (await response.json()) as { runId: string; filename: string; path: string }[];
+			expect(sessions.map((s) => s.runId)).toEqual(["new", "mid", "old"]);
+			// mtime is an internal sort key and must not leak into the response shape.
+			expect(sessions[0]).not.toHaveProperty("mtimeMs");
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("folds in a per-run summary and sorts newest-first by run_start", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "hooteams-sessions-"));
+		try {
+			const log = (runId: string, startedAt: number, goal: string, done: number, total: number, ended: boolean) => {
+				const tasks = Array.from({ length: total }, (_, i) => ({ id: `t${i}`, role: "ops" }));
+				const dag: Record<string, { role: string; status: string }> = {};
+				tasks.forEach((t, i) => {
+					dag[t.id] = { role: "ops", status: i < done ? "done" : "idle" };
+				});
+				const lines = [
+					{ type: "custom", customType: "run_config", data: { runId, goal, tasks } },
+					{ type: "custom", customType: "run_start", data: { runId, ts: startedAt } },
+					{ type: "custom", customType: "dag_state", data: { runId, dag } },
+				];
+				if (ended) lines.push({ type: "custom", customType: "run_end", data: { runId, status: "complete" } } as any);
+				return `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`;
+			};
+			await writeFile(join(dir, "run-older.jsonl"), log("older", 1000, "older goal", 1, 2, true));
+			await writeFile(join(dir, "run-newer.jsonl"), log("newer", 2000, "newer goal", 3, 3, true));
+
+			const { base: url } = startServer({ sessionsRoot: dir });
+			const response = await fetch(`${url}/sessions`);
+			const sessions = (await response.json()) as {
+				runId: string;
+				goal?: string;
+				status?: string;
+				done?: number;
+				total?: number;
+				startedAt?: number;
+			}[];
+			// Sorted newest-first by run_start ts, not mtime.
+			expect(sessions.map((s) => s.runId)).toEqual(["newer", "older"]);
+			expect(sessions[0]).toMatchObject({ goal: "newer goal", status: "done", done: 3, total: 3, startedAt: 2000 });
+			expect(sessions[1]).toMatchObject({ goal: "older goal", status: "done", done: 1, total: 2, startedAt: 1000 });
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 });

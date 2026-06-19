@@ -94,6 +94,27 @@ describe("TeamMemory", () => {
 		expect(context).not.toContain("oldest");
 	});
 
+	test("bootstrapContext injects only the most recent run plus run-agnostic knowledge", async () => {
+		const memory = freshMemory();
+		// Two older runs and the newest run, written in chronological order.
+		await memory.recordTask({ runId: "r1", taskId: "design", role: "planner", status: "done", output: "old design" });
+		await memory.recordTask({ runId: "r1", taskId: "build", role: "coder", status: "done", output: "old build" });
+		await memory.write("conventions/style", "tabs not spaces", { tags: ["convention"] }); // run-agnostic
+		await memory.recordTask({ runId: "r2", taskId: "design", role: "planner", status: "done", output: "new design" });
+		await memory.recordTask({ runId: "r2", taskId: "build", role: "coder", status: "done", output: "new build" });
+
+		const context = await memory.bootstrapContext();
+		// Most recent run's outputs are present…
+		expect(context).toContain("new design");
+		expect(context).toContain("new build");
+		// …run-agnostic knowledge (no runId) survives…
+		expect(context).toContain("tabs not spaces");
+		// …but older runs' logs are excluded.
+		expect(context).not.toContain("old design");
+		expect(context).not.toContain("old build");
+		expect(context).not.toContain("run/r1/");
+	});
+
 	test("append accumulates lines and concurrent appends never lose each other", async () => {
 		const memory = freshMemory({ project: "append" });
 		// Fire many appends to one key at once; whole-value write() would clobber,

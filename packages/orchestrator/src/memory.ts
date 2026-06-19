@@ -215,13 +215,29 @@ export class TeamMemory {
 	 * Digest of the most recently written entries, for injecting prior-run
 	 * context into a new run's root task prompts. Undefined when the store is
 	 * empty, so callers can skip the section entirely.
+	 *
+	 * Only the *most recent previous run* is injected: a new run inherits that
+	 * run's task outputs plus any run-agnostic knowledge (entries written via
+	 * memory_write, which carry no runId), but not the accumulating logs of
+	 * every older run — those would otherwise pile up in every root prompt.
 	 */
 	async bootstrapContext(limit = 10, maxValueLength = 600): Promise<string | undefined> {
 		// Run-scoped board entries are transient coordination state, not durable
 		// project knowledge — exclude them so they don't leak into later runs.
 		const all = (await this.list()).filter((entry) => !entry.tags.includes(BOARD_TAG));
 		if (all.length === 0) return undefined;
-		const lines = all
+		// Entries are stored least-recently-written first, so the newest one with a
+		// runId identifies the most recent run. Keep only that run's entries (plus
+		// run-agnostic knowledge that has no runId) so older runs' logs don't leak.
+		let latestRunId: string | undefined;
+		for (let i = all.length - 1; i >= 0; i--) {
+			if (all[i]!.runId) {
+				latestRunId = all[i]!.runId;
+				break;
+			}
+		}
+		const scoped = latestRunId ? all.filter((entry) => !entry.runId || entry.runId === latestRunId) : all;
+		const lines = scoped
 			.slice(-limit)
 			.reverse()
 			.map((entry) => {

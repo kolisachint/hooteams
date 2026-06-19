@@ -1,6 +1,6 @@
 /** The live run monitor: the workflow as a graph / timeline of stages, plus the
  *  activity feed. The shell owns view state, the inspector and the run totals. */
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { type MissionState, taskTimings } from "../lib/mission";
 import { fmtT, statColor } from "../lib/roles";
 import type { ConnectionStatus, FeedEvent } from "../lib/types";
@@ -51,6 +51,7 @@ export function StagesView({
 	const timings = useMemo(() => taskTimings(events), [events]);
 	const feedRoles = useMemo(() => [...new Set(events.map((e) => e.role))], [events]);
 	const fromLog = !!logPath;
+	const onSelectStable = useCallback((id: string) => onSelect(id), [onSelect]);
 
 	return (
 		<div className="app stages">
@@ -208,7 +209,7 @@ export function StagesView({
 							<DagGraph
 								taskList={mission.taskList}
 								selectedId={sel}
-								onSelect={(id) => onSelect(id)}
+								onSelect={onSelectStable}
 								showMinimap={minimap}
 							/>
 						) : (
@@ -218,7 +219,7 @@ export function StagesView({
 								startedAt={run.startedAt}
 								elapsedSec={elapsedSec}
 								selectedId={sel}
-								onSelect={(id) => onSelect(id)}
+								onSelect={onSelectStable}
 							/>
 						)}
 					</div>
