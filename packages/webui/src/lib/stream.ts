@@ -1,5 +1,5 @@
 import { useStore } from "./store";
-import type { TeamEvent } from "./types";
+import type { TeamConfig, TeamEvent } from "./types";
 
 /**
  * Base URL for the hooteams SSE bridge. Defaults to the empty string, i.e. the
@@ -88,6 +88,22 @@ export async function resumeTask(
 		const body = (await response.json().catch(() => ({}))) as { error?: string };
 		throw new Error(body.error ?? `resume failed: HTTP ${response.status}`);
 	}
+}
+
+/** Snapshot of every spawned role's status — drives the sidebar's agent count. */
+export async function fetchStatus(
+	host: string = HOOTEAMS_HOST,
+): Promise<Record<string, { status: string; lastEventType?: string }>> {
+	const response = await fetch(`${host}/status`);
+	if (!response.ok) throw new Error(`status failed: HTTP ${response.status}`);
+	return response.json();
+}
+
+/** Current server team config (models / prompts / concurrency) — for the live run. */
+export async function fetchConfig(host: string = HOOTEAMS_HOST): Promise<TeamConfig | null> {
+	const response = await fetch(`${host}/config`);
+	if (!response.ok) return null;
+	return response.json();
 }
 
 /** The only steering operation in the web UI: nudge an agent mid-run. */

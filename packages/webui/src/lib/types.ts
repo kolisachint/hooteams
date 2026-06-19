@@ -193,4 +193,24 @@ export interface RunInfo {
 	endedAt?: number;
 	/** Gates still open at the end of the session (replay mode). */
 	pending?: Record<string, PendingApproval>;
+	/** Team config snapshot persisted at run start — shown by the Config view from log. */
+	teamConfig?: TeamConfig;
+}
+
+/** Static team config served by GET /config — the setup the SSE stream never carries. */
+export interface TeamConfig {
+	defaults?: { provider?: string; model?: string; thinkingLevel?: string };
+	maxConcurrent?: number;
+	validator?: string;
+	roles: TeamRoleConfig[];
+}
+
+export interface TeamRoleConfig {
+	role: string;
+	model?: string;
+	provider?: string;
+	category?: string;
+	thinkingLevel?: string;
+	defaultTools?: boolean;
+	systemPrompt: string;
 }

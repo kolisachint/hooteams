@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ConfigView } from "./components/ConfigView";
 import { Icon } from "./components/Icon";
 import { Inspector } from "./components/Inspector";
+import { Sidebar } from "./components/Sidebar";
 import { type StageLayout, StagesView } from "./components/StagesView";
 import { TeamView } from "./components/TeamView";
 import { buildMission } from "./lib/mission";
-import { fetchSession } from "./lib/session";
+import { fetchSession, listSessions } from "./lib/session";
 import { useStore } from "./lib/store";
 import { connect, disconnect, HOOTEAMS_HOST, resumeTask } from "./lib/stream";
 
-type View = "taskgraph" | "team";
+type View = "taskgraph" | "config" | "team";
 
 const LS = {
 	view: "ht.view",
@@ -32,6 +34,7 @@ function TopBar({
 	onTheme,
 	minimap,
 	setMinimap,
+	onToggleNav,
 }: {
 	view: View;
 	setView: (v: View) => void;
@@ -41,10 +44,14 @@ function TopBar({
 	onTheme: () => void;
 	minimap: boolean;
 	setMinimap: (v: boolean) => void;
+	onToggleNav: () => void;
 }) {
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	return (
 		<header className="topbar">
+			<button type="button" className="tb-set icon nav-toggle" onClick={onToggleNav} title="toggle sidebar">
+				<Icon name="menu" size={15} />
+			</button>
 			<div className="tb-brand">
 				<span className="tb-mark">h</span>
 				<span className="tb-word">
@@ -61,6 +68,15 @@ function TopBar({
 				TaskGraph
 				{view === "taskgraph" && runStatus === "running" && <span className="tb-live" />}
 				{view === "taskgraph" && gatePending && <span className="tb-badge">1</span>}
+			</button>
+			<button
+				type="button"
+				className={`tb-view${view === "config" ? " on" : ""}`}
+				onClick={() => setView("config")}
+				title="run config"
+			>
+				<Icon name="file" size={15} />
+				Config
 			</button>
 			<div className="spacer" />
 			<div className="tb-settings">
@@ -147,25 +163,87 @@ export function App() {
 	const [feedFilter, setFeedFilter] = useState("all");
 	const [now, setNow] = useState(() => Date.now());
 	const [loadError, setLoadError] = useState<string | null>(null);
+	const [navOpen, setNavOpen] = useState(() => (typeof window !== "undefined" ? window.innerWidth > 860 : true));
+	const [selectedRunId, setSelectedRunId] = useState<string | null>(() =>
+		new URLSearchParams(window.location.search).get("runId"),
+	);
+	const [logPath, setLogPath] = useState<string | null>(null);
 
 	const sessionMode = useRef(false);
+	// runId we've already backfilled from disk, so a settled live run is reloaded once.
+	const backfilledRunId = useRef<string | null>(null);
 
-	// Connect to the live stream, or load a session for replay (?runId=…).
+	// Connect to the live stream, or load a session for replay (selectedRunId,
+	// driven by the sidebar's run list — kept in sync with ?runId= below).
 	useEffect(() => {
-		const runId = new URLSearchParams(window.location.search).get("runId");
-		if (runId) {
+		let cancelled = false;
+		setLoadError(null);
+		if (selectedRunId) {
 			sessionMode.current = true;
-			fetchSession(runId, HOOTEAMS_HOST)
+			fetchSession(selectedRunId, HOOTEAMS_HOST)
 				.then((info) => {
+					if (cancelled) return;
 					if (info) loadRun(info);
-					else setLoadError(`Session not found: ${runId}`);
+					else setLoadError(`Session not found: ${selectedRunId}`);
 				})
-				.catch((err) => setLoadError(err instanceof Error ? err.message : "Failed to load session"));
+				.catch((err) => {
+					if (!cancelled) setLoadError(err instanceof Error ? err.message : "Failed to load session");
+				});
+			return () => {
+				cancelled = true;
+			};
+		}
+		sessionMode.current = false;
+		connect();
+		return () => {
+			cancelled = true;
+			disconnect();
+		};
+	}, [selectedRunId, loadRun]);
+
+	// Keep ?runId= in sync without adding a history entry per switch.
+	useEffect(() => {
+		const url = new URL(window.location.href);
+		if (selectedRunId) url.searchParams.set("runId", selectedRunId);
+		else url.searchParams.delete("runId");
+		window.history.replaceState(null, "", url);
+	}, [selectedRunId]);
+
+	// Once the *live* run settles, reload its task graph from the persisted log so
+	// the view is complete and reload-proof (the SSE replay buffer is capped and
+	// in-memory). keepEvents preserves the activity feed gathered while streaming.
+	const liveSettled = !selectedRunId && (runInfo?.status === "done" || runInfo?.status === "error");
+	useEffect(() => {
+		if (!liveSettled || !runInfo || backfilledRunId.current === runInfo.runId) return;
+		backfilledRunId.current = runInfo.runId;
+		let cancelled = false;
+		fetchSession(runInfo.runId, HOOTEAMS_HOST)
+			.then((info) => {
+				if (!cancelled && info) loadRun(info, { keepEvents: true });
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [liveSettled, runInfo, loadRun]);
+
+	// Resolve the on-disk log path for whichever finished run we're viewing — drives
+	// the "viewing from log" banner. selectedRunId = explicit replay; liveSettled =
+	// the active run has ended.
+	const logRunId = selectedRunId ?? (liveSettled ? (runInfo?.runId ?? null) : null);
+	useEffect(() => {
+		if (!logRunId) {
+			setLogPath(null);
 			return;
 		}
-		connect();
-		return disconnect;
-	}, [loadRun]);
+		let cancelled = false;
+		listSessions(HOOTEAMS_HOST).then((sessions) => {
+			if (!cancelled) setLogPath(sessions.find((s) => s.runId === logRunId)?.path ?? null);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [logRunId]);
 
 	// 1s clock for the elapsed counter / live timeline.
 	useEffect(() => {
@@ -193,20 +271,27 @@ export function App() {
 	};
 
 	return (
-		<div className="shell">
-			<TopBar
-				view={view}
-				setView={setView}
-				runStatus={mission.run.status}
-				gatePending={mission.run.gatePending}
-				theme={theme}
-				onTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
-				minimap={minimap}
-				setMinimap={setMinimap}
-			/>
-			<div className="workspace">
-				{view === "taskgraph" ? (
-					loadError ? (
+		<div className={`app-shell${navOpen ? " nav-open" : " nav-collapsed"}`}>
+			<Sidebar onCollapse={() => setNavOpen(false)} selectedRunId={selectedRunId} onSelectRun={setSelectedRunId} />
+			<div className="nav-scrim" onClick={() => setNavOpen(false)} aria-hidden="true" />
+			<div className="shell">
+				<TopBar
+					view={view}
+					setView={setView}
+					runStatus={mission.run.status}
+					gatePending={mission.run.gatePending}
+					theme={theme}
+					onTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+					minimap={minimap}
+					setMinimap={setMinimap}
+					onToggleNav={() => setNavOpen((v) => !v)}
+				/>
+				<div className="workspace">
+					{view === "team" ? (
+						<TeamView mission={mission} />
+					) : view === "config" ? (
+						<ConfigView logPath={logPath} />
+					) : loadError ? (
 						<div className="app stages">
 							<div className="stage-empty">
 								<span className="se-mark">
@@ -220,6 +305,7 @@ export function App() {
 						<StagesView
 							mission={mission}
 							connection={sessionMode.current ? "live" : connection}
+							logPath={logPath}
 							elapsedSec={elapsedSec}
 							view={layout}
 							setView={setLayout}
@@ -230,14 +316,12 @@ export function App() {
 							feedFilter={feedFilter}
 							setFeedFilter={setFeedFilter}
 						/>
-					)
-				) : (
-					<TeamView mission={mission} />
-				)}
-			</div>
+					)}
+				</div>
 
-			<div className={`scrim${sel ? " show" : ""}`} onClick={() => setSel(null)} aria-hidden="true" />
-			<Inspector sel={sel} mission={mission} pending={pending} onClose={() => setSel(null)} onResume={onResume} />
+				<div className={`scrim${sel ? " show" : ""}`} onClick={() => setSel(null)} aria-hidden="true" />
+				<Inspector sel={sel} mission={mission} pending={pending} onClose={() => setSel(null)} onResume={onResume} />
+			</div>
 		</div>
 	);
 }

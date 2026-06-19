@@ -8,7 +8,9 @@
 
 /* ---- Shell ------------------------------------------------- */
 .shell {
-	height: 100vh;
+	height: 100%;
+	flex: 1 1 auto;
+	min-width: 0;
 	display: grid;
 	grid-template-rows: auto minmax(0, 1fr);
 	overflow: hidden;
@@ -610,6 +612,167 @@
 	white-space: pre-wrap;
 	word-break: break-word;
 	overflow-x: auto;
+}
+
+/* =============================================================
+   Config view — task graph (as YAML) + team config
+   ============================================================= */
+.cfg-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+	gap: var(--s-5);
+	padding: var(--s-5);
+	align-items: start;
+}
+.cfg-pane {
+	border: 1px solid var(--line);
+	border-radius: var(--radius-3);
+	overflow: hidden;
+	background: var(--paper-3);
+}
+.cfg-pane-head {
+	display: flex;
+	align-items: center;
+	gap: var(--s-2);
+	padding: var(--s-3) var(--s-4);
+	border-bottom: 1px solid var(--line);
+	background: var(--paper);
+	color: var(--ink-2);
+}
+.cfg-pane-title {
+	font-weight: 500;
+	font-size: var(--fs-sm);
+}
+.cfg-pane-meta {
+	font-family: var(--font-term);
+	font-size: var(--fs-xs);
+	color: var(--ink-4);
+}
+.cfg-code {
+	margin: 0;
+	padding: var(--s-3) 0;
+	font-family: var(--font-term);
+	font-size: var(--fs-sm);
+	line-height: 1.6;
+	overflow-x: auto;
+}
+.cfg-line {
+	display: flex;
+	gap: var(--s-3);
+	padding: 0 var(--s-4);
+}
+.cfg-no {
+	flex: 0 0 auto;
+	width: 24px;
+	text-align: right;
+	color: var(--ink-4);
+	user-select: none;
+}
+.cfg-text {
+	color: var(--ink-2);
+	white-space: pre;
+}
+.cfg-text.cfg-comment {
+	color: var(--ink-4);
+}
+.cfg-text.cfg-key {
+	color: var(--ink);
+}
+
+.cfg-side {
+	display: flex;
+	flex-direction: column;
+	gap: var(--s-5);
+}
+.cfg-summary,
+.cfg-team {
+	display: flex;
+	flex-direction: column;
+	gap: var(--s-2);
+}
+.cfg-sum-row {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--s-3);
+	font-size: var(--fs-sm);
+	color: var(--ink-3);
+	padding: 3px 0;
+	border-bottom: 1px dashed var(--line);
+}
+.cfg-sum-row b {
+	color: var(--ink);
+	font-weight: 500;
+	text-align: right;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.cfg-role {
+	border: 1px solid var(--line);
+	border-left: 2px solid var(--sc, var(--line-2));
+	border-radius: var(--radius-2);
+	padding: var(--s-3);
+	background: var(--paper);
+}
+.cfg-role-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--s-2);
+}
+.cfg-role-name {
+	font-weight: 600;
+	font-size: var(--fs-sm);
+	color: var(--ink);
+}
+.cfg-role-model {
+	font-family: var(--font-term);
+	font-size: var(--fs-xs);
+	color: var(--ink-2);
+	background: var(--paper-2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-1);
+	padding: 1px 6px;
+}
+.cfg-role-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--s-2);
+	margin-top: 4px;
+	font-size: var(--fs-xs);
+	color: var(--ink-4);
+}
+.cfg-role-prompt {
+	margin-top: var(--s-2);
+	font-size: var(--fs-xs);
+	line-height: 1.55;
+	color: var(--ink-3);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+.cfg-role-toggle {
+	margin-top: 6px;
+	background: transparent;
+	border: none;
+	padding: 0;
+	font-size: var(--fs-xs);
+	color: var(--accent);
+	cursor: pointer;
+}
+.cfg-role-toggle:hover {
+	text-decoration: underline;
+}
+.cfg-team-empty {
+	font-size: var(--fs-xs);
+	color: var(--ink-4);
+	font-style: italic;
+}
+
+@media (max-width: 860px) {
+	.cfg-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
 }
 
 /* =============================================================

@@ -120,6 +120,28 @@ export interface RouterOptions {
 	 * and GET /sessions endpoints for hoocanvas replay.
 	 */
 	sessionsRoot?: string;
+	/**
+	 * Serializable team config (models, system prompts, concurrency). Enables
+	 * GET /config so the web UI can show static config the SSE stream omits.
+	 */
+	teamConfig?: WebTeamConfig;
+}
+
+/** The serializable slice of the team config surfaced to the web UI by GET /config. */
+export interface WebTeamConfig {
+	defaults?: { provider?: string; model?: string; thinkingLevel?: string };
+	maxConcurrent?: number;
+	/** Present (and a non-empty string) when a completion validator is configured. */
+	validator?: string;
+	roles: Array<{
+		role: string;
+		model?: string;
+		provider?: string;
+		category?: string;
+		thinkingLevel?: string;
+		defaultTools?: boolean;
+		systemPrompt: string;
+	}>;
 }
 
 /** Shape-validate a POST /runs body. Returns an error message, or undefined when valid. */
@@ -307,6 +329,14 @@ export function createRouter(team: Team, channel: TeamChannel, bridge: SSEBridge
 				return json({ ok: true, role: body.role });
 			}
 
+			// ── Static team config (models / prompts the SSE stream omits) ──
+			if (request.method === "GET" && path === "/config") {
+				if (!routerOptions.teamConfig) {
+					return json({ error: "Team config not available" }, 404);
+				}
+				return json(routerOptions.teamConfig);
+			}
+
 			// ── Session file endpoints (for hoocanvas replay) ──
 			if (request.method === "GET" && path === "/sessions") {
 				const sessionsRoot = routerOptions.sessionsRoot;
@@ -321,9 +351,10 @@ export function createRouter(team: Team, channel: TeamChannel, bridge: SSEBridge
 						.filter((f): f is string => typeof f === "string" && f.endsWith(".jsonl") && f.includes("run-"))
 						.map((f) => {
 							const match = f.match(/run-([\w-]+)\.jsonl$/);
-							return match ? { runId: match[1], filename: f } : null;
+							// `path` is absolute so the web UI can show exactly where the log lives.
+							return match ? { runId: match[1], filename: f, path: join(sessionsRoot, f) } : null;
 						})
-						.filter((s): s is { runId: string; filename: string } => s !== null);
+						.filter((s): s is { runId: string; filename: string; path: string } => s !== null);
 					return json(sessions);
 				} catch {
 					return json({ error: "Failed to list sessions" }, 500);

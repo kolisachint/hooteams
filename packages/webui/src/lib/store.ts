@@ -24,8 +24,12 @@ interface Store {
 	connection: ConnectionStatus;
 	setConnection: (status: ConnectionStatus) => void;
 	dispatch: (event: TeamEvent) => void;
-	/** Replace the run from a parsed session (replay mode). */
-	loadRun: (runInfo: RunInfo) => void;
+	/**
+	 * Replace the run from a parsed session (replay mode). Pass keepEvents when
+	 * backfilling a still-displayed live run from its log so the activity feed
+	 * gathered from the stream isn't wiped.
+	 */
+	loadRun: (runInfo: RunInfo, opts?: { keepEvents?: boolean }) => void;
 }
 
 const MAX_FEED = 400;
@@ -280,7 +284,12 @@ export const useStore = create<Store>((set) => ({
 	pending: {},
 	connection: "connecting",
 	setConnection: (status) => set({ connection: status }),
-	loadRun: (runInfo) => set({ runInfo, events: [], pending: runInfo.pending ?? {} }),
+	loadRun: (runInfo, opts) =>
+		set((state) => ({
+			runInfo,
+			events: opts?.keepEvents ? state.events : [],
+			pending: runInfo.pending ?? {},
+		})),
 	dispatch: (event) =>
 		set((state) => {
 			// A dag_snapshot with a fresh runId starts a new run: clear the previous

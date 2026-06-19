@@ -1,0 +1,213 @@
+/* =============================================================
+   hooteams — left sidebar: live run + run history, collapsible.
+   Builds on tokens.css. Ported from the design handoff's project→run
+   tree; flattened to a single run list since this backend runs one
+   orchestrator per process (no multi-project concept to anchor a
+   project tree to).
+   ============================================================= */
+
+.app-shell {
+	height: 100vh;
+	display: flex;
+	overflow: hidden;
+}
+.app-shell.nav-collapsed > .sidebar {
+	display: none;
+}
+
+.sidebar {
+	width: 280px;
+	flex: 0 0 280px;
+	border-right: 1px solid var(--line);
+	background: var(--paper);
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.sidebar-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: var(--s-3) var(--s-2) var(--s-3) var(--s-4);
+	border-bottom: 1px solid var(--line);
+	flex: 0 0 auto;
+}
+.sidebar-title {
+	font-size: var(--fs-xs);
+	text-transform: uppercase;
+	letter-spacing: var(--tracking-caps);
+	color: var(--ink-3);
+	font-weight: 500;
+}
+.sidebar-head-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+.sidebar-head-actions .iconbtn {
+	width: 26px;
+	height: 26px;
+	border-color: transparent;
+	background: transparent;
+}
+.sidebar-head-actions .iconbtn:hover {
+	background: var(--paper-2);
+}
+.sidebar-head-actions .iconbtn:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+.sidebar-head-actions .iconbtn:disabled:hover {
+	background: transparent;
+}
+
+.sidebar-search {
+	position: relative;
+	padding: var(--s-3) var(--s-4) var(--s-2);
+	display: flex;
+	align-items: center;
+	flex: 0 0 auto;
+}
+.sidebar-search .input-prefix {
+	position: absolute;
+	left: 26px;
+	top: 50%;
+	transform: translateY(-50%);
+	color: var(--ink-3);
+	pointer-events: none;
+	display: inline-flex;
+}
+.sidebar-search .input {
+	flex: 1;
+	padding: 5px 28px 5px 28px;
+	font-family: inherit;
+	font-size: var(--fs-sm);
+	background: var(--paper-2);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-1);
+	color: var(--ink);
+}
+.sidebar-search .input:focus {
+	outline: none;
+	border-color: var(--line-2);
+}
+.sidebar-search .kbd-inline {
+	position: absolute;
+	right: 22px;
+	font-size: var(--fs-xs);
+	color: var(--ink-4);
+}
+
+.sidebar-runs {
+	flex: 1;
+	overflow-y: auto;
+	padding: var(--s-1) var(--s-2) var(--s-2);
+}
+
+.session-row {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	width: 100%;
+	padding: 5px 8px;
+	background: transparent;
+	border: none;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: var(--fs-sm);
+	color: var(--ink-3);
+	border-radius: var(--radius-1);
+	text-align: left;
+}
+.session-row:hover {
+	background: var(--paper-2);
+	color: var(--ink-2);
+}
+.session-row.active {
+	background: var(--accent-soft);
+	color: var(--ink);
+}
+.session-row.active .session-meta {
+	color: var(--ink-2);
+}
+.session-title {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.session-meta {
+	font-size: var(--fs-xs);
+	color: var(--ink-4);
+	flex: 0 0 auto;
+}
+.session-empty {
+	padding: 8px 12px;
+	font-size: var(--fs-xs);
+	color: var(--ink-4);
+	font-style: italic;
+}
+
+.status-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 999px;
+	display: inline-block;
+	flex: 0 0 auto;
+}
+.dot-ok {
+	background: var(--ok);
+}
+.dot-busy {
+	background: var(--accent);
+	animation: pulse 1.2s ease-in-out infinite;
+}
+.dot-off {
+	background: var(--ink-4);
+}
+.dot-err {
+	background: var(--err);
+}
+
+.sidebar-foot {
+	border-top: 1px solid var(--line);
+	padding: var(--s-3) var(--s-4);
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	flex: 0 0 auto;
+}
+.foot-row {
+	font-size: var(--fs-xs);
+	color: var(--ink-3);
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.foot-meta {
+	color: var(--ink-4);
+}
+
+/* ---- collapse / mobile drawer ------------------------------ */
+.nav-scrim {
+	display: none;
+}
+@media (max-width: 860px) {
+	.sidebar {
+		position: fixed;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		z-index: 60;
+		width: min(86vw, 320px);
+		box-shadow: var(--shadow-3);
+	}
+	.app-shell.nav-open > .nav-scrim {
+		display: block;
+		position: fixed;
+		inset: 0;
+		z-index: 50;
+		background: rgb(17 17 16 / 0.4);
+	}
+}
