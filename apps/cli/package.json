@@ -1,6 +1,6 @@
 {
 	"name": "@kolisachint/hooteams-cli",
-	"version": "0.1.31",
+	"version": "0.1.32",
 	"description": "hooteams CLI: start the team server, attach a terminal to any agent, nudge it mid-run, check status",
 	"type": "module",
 	"bin": {
