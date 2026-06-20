@@ -24,6 +24,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_PORT, type ServerConfig } from "./config.js";
+import { attachRunLogger } from "./run-logger.js";
 import { loadRules } from "./rules.js";
 
 export interface RunningServer {
@@ -62,6 +63,13 @@ export interface StartOptions {
 	webui?: boolean;
 	/** Overrides config.webuiRoot (the built web UI directory). */
 	webuiRoot?: string;
+	/**
+	 * Log run-level events (task start/finish, gates, validation, errors,
+	 * settlement) to the server console. Defaults to true so `hooteams start`
+	 * gives terminal visibility into a run; tests set it false to keep output
+	 * quiet.
+	 */
+	logRuns?: boolean;
 }
 
 export function startServer(config: ServerConfig, options: StartOptions = {}): RunningServer {
@@ -74,6 +82,10 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 	};
 	const team = new Team(channel, teamOptions);
 	const bridge = new SSEBridge(channel);
+	// Give the server terminal visibility into runs (L1): subscribe a concise
+	// per-event logger to the same channel the SSE bridge fans out. Opt out in
+	// tests (logRuns: false) to keep their output quiet.
+	if (options.logRuns !== false) attachRunLogger(channel);
 
 	// HITL is the product default: the completion gate is active unless the CLI
 	// flag or config opts into autonomous runs (CLI wins over config).
@@ -110,13 +122,26 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 			resume: (taskId, chosenOption, feedback) => orchestrator.resume(taskId, chosenOption, feedback),
 			pendingApprovals: () => orchestrator.pendingApprovals(),
 			trace: (runId) => TeamOrchestrator.buildTrace(session, runId),
+			cancel: (reason) => orchestrator.cancel(reason),
 		};
 	};
+
+	// Per-run roles (e.g. a dry-run plan's roles) bypass validateConfig(), so they
+	// never had config.defaults applied. Backfill provider/model/thinkingLevel the
+	// same way static roles get them, so a planner-spawned role inherits the team's
+	// provider instead of falling back to anthropic and failing to resolve its
+	// model id (R2-1).
+	const withDefaults = (role: RoleConfig): RoleConfig => ({
+		...role,
+		model: role.model || config.defaults?.model || role.model,
+		provider: role.provider ?? config.defaults?.provider,
+		thinkingLevel: role.thinkingLevel ?? config.defaults?.thinkingLevel,
+	});
 
 	/** Configured team plus any per-run roles; configured roles win on a name clash. */
 	const mergeRoles = (extraRoles: RoleConfig[] = []): RoleConfig[] => {
 		const configured = new Set(config.team.map((role) => role.role));
-		return [...config.team, ...extraRoles.filter((role) => !configured.has(role.role))];
+		return [...config.team, ...extraRoles.filter((role) => !configured.has(role.role)).map(withDefaults)];
 	};
 
 	// The serializable team config the web UI's Config view reads (via GET /config
@@ -293,6 +318,7 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 			clean === "/steer" ||
 			clean === "/stop" ||
 			clean === "/runs" ||
+			clean === "/runs/cancel" ||
 			clean === "/tasks/pending" ||
 			clean === "/trace" ||
 			clean === "/sessions" ||
@@ -300,7 +326,7 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 			clean.startsWith("/events/") ||
 			clean.startsWith("/sessions/") ||
 			/^\/tasks\/[^/]+\/resume$/.test(clean) ||
-			/^\/runs\/[^/]+\/trace$/.test(clean)
+			/^\/runs\/[^/]+\/(trace|cancel)$/.test(clean)
 		);
 	};
 

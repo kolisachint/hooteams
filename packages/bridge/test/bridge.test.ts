@@ -220,6 +220,7 @@ describe("HITL routes", () => {
 		const run = {
 			runId: "run-1",
 			pending: [{ taskId: "deploy", question: "Ship it?", options: ["yes", "no"] }],
+			cancelled: false,
 			resume(taskId: string, option: string, feedback?: string): boolean {
 				if (!this.pending.some((request) => request.taskId === taskId)) return false;
 				this.pending = this.pending.filter((request) => request.taskId !== taskId);
@@ -231,6 +232,11 @@ describe("HITL routes", () => {
 			},
 			trace(runId?: string) {
 				return Promise.resolve({ runId: runId ?? this.runId, status: "running", tasks: [] });
+			},
+			cancel(): boolean {
+				if (this.cancelled) return false;
+				this.cancelled = true;
+				return true;
 			},
 		};
 		return { run, resumed };
@@ -291,6 +297,32 @@ describe("HITL routes", () => {
 		const { base } = startServer({ hitl: () => run });
 		expect(await (await fetch(`${base}/trace`)).json()).toMatchObject({ runId: "run-1" });
 		expect(await (await fetch(`${base}/runs/run-7/trace`)).json()).toMatchObject({ runId: "run-7" });
+	});
+
+	test("POST /runs/cancel aborts the active run; a second cancel 409s", async () => {
+		const { run } = fakeRun();
+		const { base } = startServer({ hitl: () => run });
+		const first = await fetch(`${base}/runs/cancel`, { method: "POST" });
+		expect(first.status).toBe(200);
+		expect(await first.json()).toEqual({ ok: true, runId: "run-1", cancelled: true });
+		// The run already finished — a repeat cancel is a conflict.
+		const second = await fetch(`${base}/runs/cancel`, { method: "POST" });
+		expect(second.status).toBe(409);
+	});
+
+	test("POST /runs/:id/cancel scopes to the active run; a wrong id 404s", async () => {
+		const { run } = fakeRun();
+		const { base } = startServer({ hitl: () => run });
+		const wrong = await fetch(`${base}/runs/run-9/cancel`, { method: "POST" });
+		expect(wrong.status).toBe(404);
+		const ok = await fetch(`${base}/runs/run-1/cancel`, { method: "POST" });
+		expect(ok.status).toBe(200);
+		expect(await ok.json()).toEqual({ ok: true, runId: "run-1", cancelled: true });
+	});
+
+	test("404 on cancel while no run is attached", async () => {
+		const { base } = startServer({ hitl: () => undefined });
+		expect((await fetch(`${base}/runs/cancel`, { method: "POST" })).status).toBe(404);
 	});
 });
 

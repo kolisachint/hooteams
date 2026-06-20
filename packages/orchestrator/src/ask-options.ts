@@ -66,6 +66,21 @@ export class ApprovalRegistry {
 		return this.pending.has(taskId);
 	}
 
+	/**
+	 * Reject every pending gate (clearing their timers) — used when a run is
+	 * cancelled, so any task blocked on a human decision stops waiting instead
+	 * of hanging forever. Returns the task ids that were rejected.
+	 */
+	rejectAll(reason: string): string[] {
+		const taskIds = [...this.pending.keys()];
+		for (const entry of this.pending.values()) {
+			if (entry.timer) clearTimeout(entry.timer);
+			entry.reject(new Error(reason));
+		}
+		this.pending.clear();
+		return taskIds;
+	}
+
 	/** Snapshot of unanswered gates, e.g. to re-surface after a reconnect. */
 	pendingRequests(): ApprovalRequest[] {
 		return [...this.pending.values()].map((entry) => entry.request);
