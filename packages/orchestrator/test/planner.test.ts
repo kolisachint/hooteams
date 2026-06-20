@@ -39,3 +39,32 @@ describe("Planner roster", () => {
 		expect(planner.agent.state.systemPrompt as string).not.toContain("prefer delegating");
 	});
 });
+
+describe("Planner roleDefaults (R2-1)", () => {
+	test("a planned role without its own provider inherits roleDefaults.provider", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			roleDefaults: { provider: "github-copilot", model: "claude-opus-4.8" },
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		// The planner LLM commonly omits provider; the worker must still inherit the team's.
+		await spawnTool.execute("call-1", { role: "coder", systemPrompt: "write code", model: "claude-opus-4.8", task: "go", taskId: "t1" } as any);
+		const planned = planner.planBuffer!.roles.find((role) => role.role === "coder")!;
+		expect(planned.provider).toBe("github-copilot");
+		expect(planned.model).toBe("claude-opus-4.8");
+	});
+
+	test("an explicit provider on a planned role wins over roleDefaults", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			roleDefaults: { provider: "github-copilot", model: "claude-opus-4.8" },
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		await spawnTool.execute("call-1", { role: "coder", systemPrompt: "write code", model: "gpt-5", provider: "openai", taskId: "t1" } as any);
+		const planned = planner.planBuffer!.roles.find((role) => role.role === "coder")!;
+		expect(planned.provider).toBe("openai");
+		expect(planned.model).toBe("gpt-5");
+	});
+});

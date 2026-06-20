@@ -13,12 +13,26 @@
  * sync when the persisted session shape changes.
  */
 
+/**
+ * How long a run with no `run_end` may sit idle before it's treated as
+ * interrupted (process killed/crashed mid-run) rather than still running.
+ * Five minutes comfortably exceeds any normal gap between session writes — a
+ * live run snapshots the dag on every settle/pause, and even a long single
+ * agent turn writes well inside this window.
+ */
+export const DEFAULT_STALE_RUN_MS = 5 * 60 * 1000;
+
 /** One run as the sidebar lists it — derived purely from the on-disk log. */
 export interface SessionSummary {
 	runId: string;
 	goal?: string;
-	/** running until a run_end lands; then done/error. */
-	status: "running" | "done" | "error";
+	/**
+	 * running until a run_end lands; then done/error. A run that never wrote a
+	 * run_end and has been idle past DEFAULT_STALE_RUN_MS is reconciled to
+	 * "interrupted" so orphaned runs (killed/crashed mid-run) don't pile up
+	 * forever as "running" (L2).
+	 */
+	status: "running" | "done" | "error" | "interrupted";
 	/** Tasks in a terminal "done" state, from the latest dag_state snapshot. */
 	done: number;
 	/** Total tasks declared for the run (run_config), falling back to dag size. */
@@ -32,12 +46,16 @@ export interface SessionSummary {
  * no identifiable run (no runId in any entry). Malformed lines are skipped so a
  * partially-written log (e.g. a crashed run) still summarizes.
  */
-export function summarizeSession(jsonl: string): SessionSummary | null {
+export function summarizeSession(jsonl: string, now: number = Date.now(), staleMs: number = DEFAULT_STALE_RUN_MS): SessionSummary | null {
 	let runId = "";
 	let goal: string | undefined;
 	let status: SessionSummary["status"] = "running";
 	let startedAt: number | undefined;
 	let total = 0;
+	let ended = false;
+	// Newest timestamp seen on any entry, used to tell an idle (still streaming)
+	// run from an orphaned one when no run_end was ever written.
+	let lastTs: number | undefined;
 	// Latest dag_state wins for the done count — it's the authoritative snapshot.
 	let doneFromDag: number | undefined;
 	let dagSize = 0;
@@ -53,6 +71,7 @@ export function summarizeSession(jsonl: string): SessionSummary | null {
 		}
 		if (entry.type !== "custom" || !entry.customType || !entry.data) continue;
 		const data = entry.data as Record<string, any>;
+		if (typeof data.ts === "number" && (lastTs === undefined || data.ts > lastTs)) lastTs = data.ts;
 
 		switch (entry.customType) {
 			case "run_config": {
@@ -67,6 +86,7 @@ export function summarizeSession(jsonl: string): SessionSummary | null {
 				break;
 			}
 			case "run_end": {
+				ended = true;
 				status = data.status === "error" || data.status === "failed" ? "error" : "done";
 				break;
 			}
@@ -85,6 +105,13 @@ export function summarizeSession(jsonl: string): SessionSummary | null {
 	}
 
 	if (!runId) return null;
+	// Reconcile an orphaned run: no run_end and no activity for staleMs means the
+	// process died mid-run, so report it as interrupted instead of a zombie
+	// "running" that never resolves (L2). A run still inside the window stays
+	// "running" — it may just be between writes.
+	if (!ended && lastTs !== undefined && now - lastTs > staleMs) {
+		status = "interrupted";
+	}
 	return {
 		runId,
 		goal,

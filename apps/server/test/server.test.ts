@@ -10,6 +10,7 @@ import {
 	type AgentEvent,
 	type AgentMessage,
 	InMemorySessionRepo,
+	type RoleConfig,
 	TaskDag,
 	type TaskNode,
 	TeamMemory,
@@ -57,7 +58,7 @@ describe("validateConfig", () => {
 
 	test("rejects missing team array and malformed entries", () => {
 		expect(() => validateConfig({}, "test")).toThrow(/"team" must be an array/);
-		expect(() => validateConfig({ team: [{ role: "x" } as any] }, "test")).toThrow(/needs string fields/);
+		expect(() => validateConfig({ team: [{ role: "x" } as any] }, "test")).toThrow(/needs a string "systemPrompt" or "systemPromptFile"/);
 		expect(() =>
 			validateConfig(
 				{
@@ -101,7 +102,7 @@ describe("startServer", () => {
 	test("spawns the configured team and serves status until /stop", async () => {
 		const running = startServer(
 			{ team: [{ role: "coder", model: "fake-model", systemPrompt: "code" }] },
-			{ port: 0, teamOptions: { resolveModel: () => fakeModel } },
+			{ port: 0, logRuns: false, teamOptions: { resolveModel: () => fakeModel } },
 		);
 		const base = `http://localhost:${running.port}`;
 
@@ -150,7 +151,7 @@ describe("startServer", () => {
 
 		const running = startServer(
 			{ team: [{ role: "ops", model: "fake-model", systemPrompt: "ops" }] },
-			{ port: 0, teamOptions: { resolveModel: () => fakeModel } },
+			{ port: 0, logRuns: false, teamOptions: { resolveModel: () => fakeModel } },
 		);
 		const base = `http://localhost:${running.port}`;
 		try {
@@ -284,7 +285,7 @@ describe("POST /runs end to end", () => {
 	test("a posted run pauses on its gate, resumes over HTTP, and traces complete", async () => {
 		// This suite exercises the agent-driven marker gate; opt out of the HITL
 		// completion gate so the run settles without an extra approval.
-		const running = startServer(config, { port: 0, sessionsRoot, memoryRoot, teamOptions, allowAutonomous: true });
+		const running = startServer(config, { port: 0, logRuns: false, sessionsRoot, memoryRoot, teamOptions, allowAutonomous: true });
 		const base = `http://localhost:${running.port}`;
 		try {
 			const started = await fetch(`${base}/runs`, {
@@ -357,7 +358,7 @@ describe("POST /runs end to end", () => {
 
 		const running = startServer(
 			{ ...config, validator: "You judge whether the team's haiku satisfies the goal." },
-			{ port: 0, sessionsRoot, memoryRoot, allowAutonomous: true, teamOptions: { ...teamOptions, streamFn: validatingStreamFn } },
+			{ port: 0, logRuns: false, sessionsRoot, memoryRoot, allowAutonomous: true, teamOptions: { ...teamOptions, streamFn: validatingStreamFn } },
 		);
 		const base = `http://localhost:${running.port}`;
 		try {
@@ -382,10 +383,49 @@ describe("POST /runs end to end", () => {
 		}
 	});
 
+	test("a per-run role without its own provider inherits config.defaults.provider (R2-1)", async () => {
+		// A planner-produced role often omits provider; the server must backfill it
+		// from defaults instead of falling back to anthropic and failing to resolve.
+		const seen: RoleConfig[] = [];
+		const capturingResolve = (cfg: RoleConfig) => {
+			seen.push(cfg);
+			return fakeModel;
+		};
+		// A plain completing stream (no approval marker) so the run settles instead
+		// of pausing on the gate — we only care that the role's provider was backfilled.
+		const plainStreamFn: StreamFn = (() => {
+			const stream = new MockAssistantStream() as unknown as AssistantMessageEventStream;
+			queueMicrotask(() => (stream as any).push({ type: "done", reason: "stop", message: assistantReply("a fine haiku") }));
+			return stream;
+		}) as StreamFn;
+		const running = startServer(
+			{ ...config, defaults: { provider: "github-copilot", model: "fake-model" } },
+			{ port: 0, logRuns: false, sessionsRoot, memoryRoot, allowAutonomous: true, teamOptions: { ...teamOptions, resolveModel: capturingResolve, streamFn: plainStreamFn } },
+		);
+		const base = `http://localhost:${running.port}`;
+		try {
+			const started = await fetch(`${base}/runs`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					roles: [{ role: "poet", systemPrompt: "you write haikus", model: "fake-model" }],
+					tasks: [{ id: "draft", role: "poet", prompt: "write the haiku" }],
+				}),
+			});
+			expect(started.status).toBe(202);
+			const trace = await pollTraceSettled(base);
+			expect(trace.tasks[0]).toMatchObject({ taskId: "draft", role: "poet" });
+			const poet = seen.find((cfg) => cfg.role === "poet");
+			expect(poet?.provider).toBe("github-copilot");
+		} finally {
+			await running.stop();
+		}
+	});
+
 	test("a paused run survives a server restart with resumeInterrupted", async () => {
 		const restartRoot = mkdtempSync(join(tmpdir(), "hooteams-server-restart-"));
 		try {
-			const first = startServer(config, { port: 0, sessionsRoot: restartRoot, memoryRoot, teamOptions, allowAutonomous: true });
+			const first = startServer(config, { port: 0, logRuns: false, sessionsRoot: restartRoot, memoryRoot, teamOptions, allowAutonomous: true });
 			const baseA = `http://localhost:${first.port}`;
 			const started = await fetch(`${baseA}/runs`, {
 				method: "POST",
@@ -400,6 +440,7 @@ describe("POST /runs end to end", () => {
 
 			const second = startServer(config, {
 				port: 0,
+				logRuns: false,
 				sessionsRoot: restartRoot,
 				memoryRoot,
 				teamOptions,
@@ -451,7 +492,7 @@ describe("POST /runs end to end", () => {
 		const freshMemoryRoot = mkdtempSync(join(tmpdir(), "hooteams-server-memflow-"));
 		const running = startServer(
 			{ ...config, project: "memflow" },
-			{ port: 0, sessionsRoot, memoryRoot: freshMemoryRoot, allowAutonomous: true, teamOptions: { ...teamOptions, streamFn: memoryAwareStreamFn } },
+			{ port: 0, logRuns: false, sessionsRoot, memoryRoot: freshMemoryRoot, allowAutonomous: true, teamOptions: { ...teamOptions, streamFn: memoryAwareStreamFn } },
 		);
 		const base = `http://localhost:${running.port}`;
 		try {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { summarizeSession } from "../src/session-summary.js";
+import { DEFAULT_STALE_RUN_MS, summarizeSession } from "../src/session-summary.js";
 
 /** Build a JSONL session log from custom entries. */
 function jsonl(...entries: { customType: string; data: Record<string, unknown> }[]): string {
@@ -15,14 +15,41 @@ describe("summarizeSession", () => {
 	});
 
 	test("digests goal, counts, startedAt; status is running until run_end", () => {
+		// now within the staleness window of the last entry, so it stays "running".
 		const running = summarizeSession(
 			jsonl(
 				{ customType: "run_config", data: { runId: "r1", goal: "ship it", tasks: [{ id: "a" }, { id: "b" }, { id: "c" }] } },
 				{ customType: "run_start", data: { runId: "r1", ts: 1234 } },
-				{ customType: "dag_state", data: { runId: "r1", dag: { a: { status: "done" }, b: { status: "running" }, c: { status: "idle" } } } },
+				{ customType: "dag_state", data: { runId: "r1", ts: 1240, dag: { a: { status: "done" }, b: { status: "running" }, c: { status: "idle" } } } },
 			),
+			1240,
 		);
 		expect(running).toEqual({ runId: "r1", goal: "ship it", status: "running", done: 1, total: 3, startedAt: 1234 });
+	});
+
+	test("reconciles an orphaned run (no run_end, idle past the window) to interrupted (L2)", () => {
+		const log = jsonl(
+			{ customType: "run_config", data: { runId: "r-orphan", tasks: [{ id: "a" }, { id: "b" }] } },
+			{ customType: "run_start", data: { runId: "r-orphan", ts: 1000 } },
+			{ customType: "task_start", data: { runId: "r-orphan", taskId: "a", ts: 1500 } },
+			{ customType: "dag_state", data: { runId: "r-orphan", ts: 1500, dag: { a: { status: "running" }, b: { status: "idle" } } } },
+			// no run_end — the process died here
+		);
+		// Plenty past the staleness window from the last entry's ts (1500).
+		const stale = summarizeSession(log, 1500 + DEFAULT_STALE_RUN_MS + 1);
+		expect(stale).toMatchObject({ runId: "r-orphan", status: "interrupted", done: 0, total: 2 });
+		// Just inside the window it's still considered running (between writes).
+		const fresh = summarizeSession(log, 1500 + DEFAULT_STALE_RUN_MS - 1);
+		expect(fresh).toMatchObject({ status: "running" });
+	});
+
+	test("a completed run is never reconciled, even long after its last write", () => {
+		const log = jsonl(
+			{ customType: "run_config", data: { runId: "r-done", tasks: [{ id: "a" }] } },
+			{ customType: "run_start", data: { runId: "r-done", ts: 1000 } },
+			{ customType: "run_end", data: { runId: "r-done", status: "complete", ts: 1100 } },
+		);
+		expect(summarizeSession(log, 1100 + DEFAULT_STALE_RUN_MS * 100)).toMatchObject({ status: "done" });
 	});
 
 	test("run_end sets done/error; the latest dag_state wins for the count", () => {

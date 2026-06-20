@@ -187,6 +187,52 @@ describe("TeamOrchestrator", () => {
 		expect(ends).toEqual([{ runId: expect.any(String), taskId: "a", status: "error", error: "boom", ts: expect.any(Number) }]);
 	});
 
+	test("a failed run surfaces completed upstream output and a partial-results summary (R2-4)", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "design", role: "coder" });
+		dag.add({ id: "build", role: "coder", deps: ["design"] });
+		dag.add({ id: "ship", role: "ops", deps: ["build"] });
+		// design completes; build fails; ship is therefore blocked.
+		const { createHarness } = fixture((harness, _text, _call) => {
+			// FakeHarness's script sees the node via promptOrder; branch on prompt text.
+			if (harness.prompts[0]?.startsWith("build")) {
+				harness.failRun(new Error("compile error"));
+				return;
+			}
+			harness.endRun([assistant("did it")]);
+		});
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+
+		await new TeamOrchestrator(dag, { session, channel, createHarness, runId: "run-partial" }).run();
+
+		expect(dag.get("design")).toMatchObject({ status: "done", output: "did it" });
+		expect(dag.get("build")?.status).toBe("error");
+		expect(dag.get("ship")?.status).toBe("idle"); // blocked: never ran
+		expect(events.at(-1)?.type).toBe("dag_failed");
+
+		// A human-readable partial-results line names what completed and what was blocked.
+		const summaryError = events.find(
+			(event) => event.type === "team_error" && event.error.includes("1 task(s) completed"),
+		) as Extract<TeamEvent, { type: "team_error" }> | undefined;
+		expect(summaryError?.error).toContain("design");
+		expect(summaryError?.error).toContain("blocked");
+		expect(summaryError?.error).toContain("ship");
+
+		// The structured run_summary entry preserves the completed output for replay.
+		const summaries = await customEntries(session, "run_summary");
+		expect(summaries).toHaveLength(1);
+		expect(summaries[0]).toMatchObject({
+			runId: "run-partial",
+			status: "failed",
+			done: [{ taskId: "design", role: "coder", output: "did it" }],
+			errored: [{ taskId: "build", role: "coder" }],
+			blocked: [{ taskId: "ship", role: "ops" }],
+		});
+	});
+
 	test("an assistant errorMessage in the final message fails the node", async () => {
 		const session = await new InMemorySessionRepo().create();
 		const dag = new TaskDag();
@@ -495,6 +541,112 @@ describe("TeamOrchestrator", () => {
 		expect(verify.approvals).toEqual([]);
 	});
 
+	test("buildTrace reports an in-flight task as running, not idle (R2-2)", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "build", role: "coder" });
+		// A harness that starts and waits on a gate, so the task stays in flight
+		// while we read its trace, then settles when the test releases the gate.
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		let buildHarness: FakeHarness | undefined;
+		const createHarness = () => {
+			const fake = new FakeHarness(async (harness) => {
+				started.resolve();
+				await release.promise;
+				harness.endRun([assistant("built")]);
+			});
+			buildHarness = fake;
+			return { harness: fake, sessionId: "session-build" };
+		};
+		const orchestrator = new TeamOrchestrator(dag, { session, createHarness, runId: "run-live" });
+		const run = orchestrator.run();
+		await started.promise;
+		// Let the post-dispatch snapshot + task_start writes land.
+		await orchestrator.flush();
+
+		const trace = await TeamOrchestrator.buildTrace(session, "run-live");
+		const build = trace.tasks.find((task) => task.taskId === "build")!;
+		expect(build.startedAt).toBeNumber();
+		expect(build.endedAt).toBeUndefined();
+		// The crux of R2-2: a busy task must not read back as "idle".
+		expect(build.status).not.toBe("idle");
+		expect(build.status).toBe("streaming");
+
+		release.resolve();
+		void buildHarness;
+		await run;
+	});
+
+	test("cancel() aborts an in-flight run, keeps completed output, and settles failed (R2-3)", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		dag.add({ id: "b", role: "coder", deps: ["a"] });
+		// "a" finishes; "b" starts and hangs until we cancel.
+		const started = Promise.withResolvers<void>();
+		let aborted = false;
+		const createHarness = (node: TaskNode) => {
+			if (node.id === "a") {
+				const fake = new FakeHarness((harness) => harness.endRun([assistant("did a")]));
+				return { harness: fake, sessionId: "session-a" };
+			}
+			const fake = new FakeHarness(() => started.resolve()); // never settles on its own
+			(fake as unknown as { abort: () => void }).abort = () => {
+				aborted = true;
+			};
+			return { harness: fake, sessionId: "session-b" };
+		};
+		const channel = new TeamChannel();
+		const events: TeamEvent[] = [];
+		channel.subscribe((event) => events.push(event));
+		const orchestrator = new TeamOrchestrator(dag, { session, channel, createHarness, runId: "run-x" });
+		const run = orchestrator.run();
+		await started.promise;
+
+		expect(orchestrator.cancel("user cancelled")).toBe(true);
+		await run;
+
+		// The completed upstream keeps its output; the in-flight node is aborted + errored.
+		expect(dag.get("a")).toMatchObject({ status: "done", output: "did a" });
+		expect(dag.get("b")?.status).toBe("error");
+		expect(aborted).toBe(true);
+		expect(orchestrator.isSettled).toBe(true);
+		expect(events.some((event) => event.type === "team_error" && event.error === "user cancelled")).toBe(true);
+		expect(events.at(-1)?.type).toBe("dag_failed");
+		// A second cancel is a no-op.
+		expect(orchestrator.cancel()).toBe(false);
+		// The run end was persisted as failed, so the session reconciles cleanly.
+		expect(await customEntries(session, "run_end")).toEqual([{ runId: "run-x", status: "failed", ts: expect.any(Number) }]);
+	});
+
+	test("cancel() rejects a pending approval gate so a paused run stops waiting (R2-3)", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "ops" });
+		const { createHarness, fakes } = fixture((harness, _text, call) => {
+			if (call === 0) {
+				const marker = "AWAITING_APPROVAL: Ship it? | yes, no";
+				harness.say(marker);
+				harness.endRun([assistant(marker)]);
+			}
+		});
+		void fakes;
+		const channel = new TeamChannel();
+		const paused = once(channel, "task_paused");
+		const orchestrator = new TeamOrchestrator(dag, { session, channel, createHarness, runId: "run-p" });
+		const run = orchestrator.run();
+		await paused;
+
+		expect(orchestrator.pendingApprovals()).toHaveLength(1);
+		expect(orchestrator.cancel()).toBe(true);
+		await run;
+
+		expect(orchestrator.pendingApprovals()).toHaveLength(0);
+		expect(dag.get("a")?.status).toBe("error");
+		expect(orchestrator.isSettled).toBe(true);
+	});
+
 	test("chains dependency outputs into dependent prompts", async () => {
 		const session = await new InMemorySessionRepo().create();
 		const dag = new TaskDag();
@@ -619,6 +771,73 @@ describe("TeamOrchestrator", () => {
 		expect(dag.get("a")?.status).toBe("done");
 		expect(events.some((event) => event.type === "task_retried" && event.error === "goal validation: output too short")).toBe(true);
 		expect(events.at(-1)?.type).toBe("dag_complete");
+	});
+
+	test("a reworked task's re-dispatch prompt carries the validator's correction feedback (M1)", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		// Each re-dispatch builds a fresh harness, so accumulate prompt text per node
+		// across instances rather than reading the (last) harness's own array.
+		const { createHarness } = fixture();
+		const prompts = new Map<string, string[]>();
+		const recordingHarness = (node: TaskNode) => {
+			const handle = createHarness(node);
+			const inner = handle.harness.prompt.bind(handle.harness);
+			handle.harness.prompt = (text: string) => {
+				(prompts.get(node.id) ?? prompts.set(node.id, []).get(node.id)!).push(text);
+				return inner(text);
+			};
+			return handle;
+		};
+		const channel = new TeamChannel();
+		let round = 0;
+
+		await new TeamOrchestrator(dag, {
+			session,
+			channel,
+			createHarness: recordingHarness,
+			validator: { validate: async () => (++round === 1 ? "GOAL_UNMET: output too short | a" : "GOAL_MET") },
+		}).run();
+
+		// The node ran twice; the second prompt must include the rejection reason so
+		// the agent corrects course instead of repeating its identical output.
+		const aPrompts = prompts.get("a")!;
+		expect(aPrompts).toHaveLength(2);
+		expect(aPrompts[0]).not.toContain("output too short");
+		expect(aPrompts[1]).toContain("output too short");
+		expect(aPrompts[1]).toContain("previous attempt");
+	});
+
+	test("a reworked upstream's dependents re-run with feedback explaining the re-run (M1)", async () => {
+		const session = await new InMemorySessionRepo().create();
+		const dag = new TaskDag();
+		dag.add({ id: "a", role: "coder" });
+		dag.add({ id: "b", role: "coder", deps: ["a"] });
+		const { createHarness } = fixture();
+		const prompts = new Map<string, string[]>();
+		const recordingHarness = (node: TaskNode) => {
+			const handle = createHarness(node);
+			const inner = handle.harness.prompt.bind(handle.harness);
+			handle.harness.prompt = (text: string) => {
+				(prompts.get(node.id) ?? prompts.set(node.id, []).get(node.id)!).push(text);
+				return inner(text);
+			};
+			return handle;
+		};
+		const channel = new TeamChannel();
+		let round = 0;
+
+		await new TeamOrchestrator(dag, {
+			session,
+			channel,
+			createHarness: recordingHarness,
+			validator: { validate: async () => (++round === 1 ? "GOAL_UNMET: a is wrong | a" : "GOAL_MET") },
+		}).run();
+
+		const bPrompts = prompts.get("b")!;
+		expect(bPrompts).toHaveLength(2);
+		expect(bPrompts[1]).toContain('upstream "a"');
 	});
 
 	test("a GOAL_UNMET on an upstream task also re-runs its dependents", async () => {

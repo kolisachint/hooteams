@@ -188,7 +188,8 @@ export interface RunInfo {
 	runId: string;
 	goal?: string;
 	dag: DagState;
-	status: "running" | "done" | "error";
+	/** "interrupted" marks an orphaned run (killed/crashed mid-run, no run_end). */
+	status: "running" | "done" | "error" | "interrupted";
 	startedAt?: number;
 	endedAt?: number;
 	/** Gates still open at the end of the session (replay mode). */

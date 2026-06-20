@@ -2,7 +2,7 @@
 import { loadConfig, startServer } from "@kolisachint/hooteams-server";
 import pkg from "../package.json" with { type: "json" };
 import { banner } from "./banner.js";
-import { attach, init, nudge, pending, plan, resume, run, status, stop, work } from "./commands.js";
+import { attach, cancel, init, listWorkflows, nudge, pending, plan, resume, run, runWorkflow, status, stop, work, workflowInit } from "./commands.js";
 
 const USAGE = `hooteams — multi-agent orchestration for hoocode
 
@@ -14,11 +14,15 @@ Usage:
                                                            start the team server + live web UI
   hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
   hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
+  hooteams workflow init [--force]                          scaffold .agents/workflows/ from .agents/commands/*.md
+  hooteams workflow run <name> [--detach] [--host …]        run a named .agents/workflows/<name>.json (no planner)
+  hooteams workflow list [--host …]                         list available workflows
   hooteams pending [--host …]                               list approval gates awaiting an answer
   hooteams resume <taskId> "<option>" [--feedback "…"]      answer an approval gate
   hooteams attach <role> [--replay 50] [--host …]           attach this terminal to an agent
   hooteams nudge  <role> "<message>" [--host …]             inject a message mid-run
   hooteams status [--host …]                                all agents at a glance
+  hooteams cancel [--host …]                                abort the active run (server keeps running)
   hooteams stop   [--host …]                                stop the server gracefully
 
 Options:
@@ -122,6 +126,24 @@ try {
 			await run(host, file, !args.includes("--detach"));
 			break;
 		}
+		case "workflow": {
+			const sub = positional(0);
+			if (sub === "init") {
+				await workflowInit({ force: args.includes("--force") });
+				break;
+			}
+			if (sub === "list") {
+				listWorkflows();
+				break;
+			}
+			if (sub === "run") {
+				const name = positional(1);
+				if (!name) throw new Error("Usage: hooteams workflow run <name> [--detach]");
+				await runWorkflow(host, name, !args.includes("--detach"));
+				break;
+			}
+			throw new Error("Usage: hooteams workflow <init|run|list> [name] [--detach] [--force]");
+		}
 		case "pending":
 			await pending(host);
 			break;
@@ -147,6 +169,9 @@ try {
 		}
 		case "status":
 			await status(host);
+			break;
+		case "cancel":
+			await cancel(host);
 			break;
 		case "stop":
 			await stop(host);

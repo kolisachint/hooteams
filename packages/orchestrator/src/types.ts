@@ -122,6 +122,20 @@ export type TeamEvent =
 export interface RoleConfig {
 	role: string;
 	systemPrompt: string;
+	/**
+	 * Path to a `.md` file whose content becomes `systemPrompt` at config load
+	 * time, resolved relative to the directory holding the config file. Takes
+	 * precedence over an inline `systemPrompt` when both are set. The loader
+	 * resolves this away, so the orchestrator/planner never see it.
+	 */
+	systemPromptFile?: string;
+	/**
+	 * Paths to skill `.md` files whose bodies are appended to the resolved
+	 * `systemPrompt` (each under a `## Skill: <name>` heading), resolved relative
+	 * to the config file's directory. YAML frontmatter is stripped. The loader
+	 * resolves these away, so the orchestrator/planner never see them.
+	 */
+	skillFiles?: string[];
 	/** Optional grouping label for the role (e.g. "deep", "quick"). Cosmetic today. */
 	category?: string;
 	/** Appendix injected after the base prompt and guidelines (e.g. "focus on security"). */

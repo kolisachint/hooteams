@@ -21,6 +21,11 @@ export function parseSession(jsonl: string): RunInfo | null {
 	let status: RunInfo["status"] = "running";
 	let startedAt: number | undefined;
 	let endedAt: number | undefined;
+	let ended = false;
+	// Newest entry timestamp, used to reconcile an orphaned run (no run_end) to
+	// "interrupted" instead of leaving it stuck "running" (L2). Mirrors the
+	// server-side summarizeSession.
+	let lastTs: number | undefined;
 	let teamConfig: TeamConfig | undefined;
 	// Gates opened (approval_request) minus those answered (approval_response).
 	// What's left is still awaiting a decision at the end of the session — a
@@ -38,6 +43,7 @@ export function parseSession(jsonl: string): RunInfo | null {
 		if (entry.type !== "custom" || !entry.customType || !entry.data) continue;
 
 		const data = entry.data as Record<string, any>;
+		if (typeof data.ts === "number" && (lastTs === undefined || data.ts > lastTs)) lastTs = data.ts;
 
 		switch (entry.customType) {
 			case "run_config": {
@@ -80,6 +86,7 @@ export function parseSession(jsonl: string): RunInfo | null {
 			}
 
 			case "run_end": {
+				ended = true;
 				endedAt = data.ts;
 				status = data.status === "done" ? "done" : data.status === "error" ? "error" : "done";
 				break;
@@ -152,6 +159,13 @@ export function parseSession(jsonl: string): RunInfo | null {
 
 	if (!runId) return null;
 
+	// Reconcile an orphaned run (killed/crashed mid-run, no run_end) idle past the
+	// staleness window to "interrupted", so a replay of a zombie run doesn't render
+	// as perpetually "running" (L2). Kept in sync with the server's summarizeSession.
+	if (!ended && lastTs !== undefined && Date.now() - lastTs > STALE_RUN_MS) {
+		status = "interrupted";
+	}
+
 	return {
 		runId,
 		goal,
@@ -163,6 +177,12 @@ export function parseSession(jsonl: string): RunInfo | null {
 		teamConfig,
 	};
 }
+
+/**
+ * How long a run with no run_end may sit idle before replay treats it as
+ * interrupted rather than running. Matches the server's DEFAULT_STALE_RUN_MS.
+ */
+const STALE_RUN_MS = 5 * 60 * 1000;
 
 /** Map hooteams task status to our TaskStatus type. */
 function mapStatus(status: string): DagNode["status"] {

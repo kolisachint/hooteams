@@ -44,6 +44,12 @@ export interface HitlRun {
 	resume(taskId: string, chosenOption: string, feedback?: string): boolean;
 	pendingApprovals(): ApprovalRequestWire[];
 	trace(runId?: string): Promise<unknown>;
+	/**
+	 * Abort the active run: stop dispatching, abort live agents, fail the
+	 * unfinished tasks, and settle the run. Returns false when the run had
+	 * already finished (nothing to cancel). Completed tasks keep their output.
+	 */
+	cancel(reason?: string): boolean;
 }
 
 /** One dag node as posted to POST /runs. */
@@ -216,6 +222,10 @@ function validateStartRun(body: { tasks?: unknown; goal?: unknown; roles?: unkno
  *                                another surface answered first — first answer wins)
  *   GET  /trace                  TraceRun of the attached run
  *   GET  /runs/:runId/trace      TraceRun for one run id
+ *   POST /runs/cancel            abort the active run → { ok, runId, cancelled };
+ *                                409 when it already finished
+ *   POST /runs/:runId/cancel     same, scoped to a run id (404 if it isn't the
+ *                                active run)
  */
 export function createRouter(team: Team, channel: TeamChannel, bridge: SSEBridge, routerOptions: RouterOptions = {}): Router {
 	return {
@@ -277,10 +287,27 @@ export function createRouter(team: Team, channel: TeamChannel, bridge: SSEBridge
 				}
 			}
 
-			if (path === "/tasks/pending" || path === "/trace" || /^\/(tasks\/[^/]+\/resume|runs\/[^/]+\/trace)$/.test(path)) {
+			if (
+				path === "/tasks/pending" ||
+				path === "/trace" ||
+				path === "/runs/cancel" ||
+				/^\/(tasks\/[^/]+\/resume|runs\/[^/]+\/(trace|cancel))$/.test(path)
+			) {
 				const run = routerOptions.hitl?.();
 				if (!run) {
 					return json({ error: "No active run" }, 404);
+				}
+				const cancelMatch = request.method === "POST" ? /^\/runs\/([^/]+)\/cancel$/.exec(path) : null;
+				if (request.method === "POST" && (path === "/runs/cancel" || cancelMatch)) {
+					const runId = cancelMatch ? decodeURIComponent(cancelMatch[1]!) : undefined;
+					// A run id in the path must match the active run — there is only one.
+					if (runId && runId !== run.runId) {
+						return json({ error: `Run "${runId}" is not the active run` }, 404);
+					}
+					if (!run.cancel()) {
+						return json({ error: "Run already finished" }, 409);
+					}
+					return json({ ok: true, runId: run.runId, cancelled: true });
 				}
 				if (request.method === "GET" && path === "/tasks/pending") {
 					const pending = run.pendingApprovals().map(({ taskId, question, options }) => ({ taskId, question, options }));

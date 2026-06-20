@@ -45,13 +45,39 @@ const spawnAgentParams = Type.Object({
 });
 
 /**
+ * Team-wide model fallbacks applied to a role the planner spawns without its
+ * own — the dynamic-role twin of config `defaults`. Without this, a spawned
+ * role with no explicit provider falls back to the hardcoded DEFAULT_PROVIDER
+ * ("anthropic"), so a team configured for any other provider can't resolve its
+ * model id and the worker errors instantly. Keep it in sync with how
+ * validateConfig() applies defaults to static roles.
+ */
+export interface RoleDefaults {
+	provider?: string;
+	model?: string;
+}
+
+/** Apply team defaults to a planner-built role config: inherit provider/model when the planner left them unset. */
+function applyRoleDefaults<T extends { provider?: string; model: string }>(config: T, defaults?: RoleDefaults): T {
+	return {
+		...config,
+		provider: config.provider ?? defaults?.provider,
+		model: config.model || defaults?.model || config.model,
+	};
+}
+
+/**
  * Tool handed to the planner agent so it can grow the team itself.
  * Spawning awaits tool assembly (MCP servers included); an optional initial
  * task runs detached so the planner keeps reasoning while the worker starts.
  * When a dag is supplied, a taskId param registers the worker's task in it so
  * the orchestrator tracks the worker by task id, not just role.
+ *
+ * `defaults` supplies the team's provider/model so a role spawned without an
+ * explicit provider inherits the configured one instead of falling back to
+ * anthropic (see RoleDefaults).
  */
-export function createSpawnAgentTool(team: Team, dag?: TaskDag, policy?: SpawnPolicy): AgentTool<typeof spawnAgentParams> {
+export function createSpawnAgentTool(team: Team, dag?: TaskDag, policy?: SpawnPolicy, defaults?: RoleDefaults): AgentTool<typeof spawnAgentParams> {
 	return {
 		name: "spawn_agent",
 		label: "Spawn Agent",
@@ -69,15 +95,18 @@ export function createSpawnAgentTool(team: Team, dag?: TaskDag, policy?: SpawnPo
 				{ role: params.role, defaultTools: params.defaultTools, mcpConfigPath: params.mcpConfigPath, cwd: params.cwd },
 				policy,
 			);
-			const config: RoleConfig = {
-				role: params.role,
-				systemPrompt: params.systemPrompt,
-				model: params.model,
-				provider: params.provider,
-				defaultTools: params.defaultTools,
-				mcpConfigPath: params.mcpConfigPath,
-				cwd: params.cwd,
-			};
+			const config: RoleConfig = applyRoleDefaults(
+				{
+					role: params.role,
+					systemPrompt: params.systemPrompt,
+					model: params.model,
+					provider: params.provider,
+					defaultTools: params.defaultTools,
+					mcpConfigPath: params.mcpConfigPath,
+					cwd: params.cwd,
+				},
+				defaults,
+			);
 			const agent = await team.spawnAsync(config);
 			if (dag && params.taskId && !dag.get(params.taskId)) {
 				dag.add({ id: params.taskId, role: params.role, deps: params.deps, retries: params.retries, timeoutMs: params.timeoutMs });
@@ -303,7 +332,7 @@ function freeTaskId(buffer: PlanBuffer, preferred: string): string {
  * the plan buffer instead of spawning anything, so the plan can be inspected
  * (and approved) before a single agent runs.
  */
-export function createPlanSpawnAgentTool(buffer: PlanBuffer, policy?: SpawnPolicy): AgentTool<typeof spawnAgentParams> {
+export function createPlanSpawnAgentTool(buffer: PlanBuffer, policy?: SpawnPolicy, defaults?: RoleDefaults): AgentTool<typeof spawnAgentParams> {
 	return {
 		name: "spawn_agent",
 		label: "Plan Agent",
@@ -320,15 +349,20 @@ export function createPlanSpawnAgentTool(buffer: PlanBuffer, policy?: SpawnPolic
 				policy,
 			);
 			if (!buffer.roles.some((role) => role.role === params.role)) {
-				buffer.roles.push({
-					role: params.role,
-					systemPrompt: params.systemPrompt,
-					model: params.model,
-					provider: params.provider,
-					defaultTools: params.defaultTools,
-					mcpConfigPath: params.mcpConfigPath,
-					cwd: params.cwd,
-				});
+				buffer.roles.push(
+					applyRoleDefaults(
+						{
+							role: params.role,
+							systemPrompt: params.systemPrompt,
+							model: params.model,
+							provider: params.provider,
+							defaultTools: params.defaultTools,
+							mcpConfigPath: params.mcpConfigPath,
+							cwd: params.cwd,
+						},
+						defaults,
+					),
+				);
 			}
 			let taskId: string | undefined;
 			if (params.task || params.taskId) {
@@ -411,6 +445,12 @@ export interface PlannerOptions {
 	 */
 	availableRoles?: RoleConfig[];
 	/**
+	 * Team-wide model fallbacks (provider/model) applied to roles the planner
+	 * spawns without their own — so a dynamic role inherits the configured
+	 * provider instead of falling back to anthropic. Mirrors config `defaults`.
+	 */
+	roleDefaults?: RoleDefaults;
+	/**
 	 * Plan without executing: spawn_agent and delegate_task write to
 	 * `planBuffer` instead of touching the team, so the plan can be inspected
 	 * (and run later via tasks.json / POST /runs) before any agent starts.
@@ -490,9 +530,9 @@ export class Planner {
 			this.planBuffer = { roles: [], tasks: [] };
 		}
 		const teamTools: AgentTool<any>[] = this.planBuffer
-			? [createPlanSpawnAgentTool(this.planBuffer, options.spawnPolicy), createPlanDelegateTaskTool(this.planBuffer)]
+			? [createPlanSpawnAgentTool(this.planBuffer, options.spawnPolicy, options.roleDefaults), createPlanDelegateTaskTool(this.planBuffer)]
 			: [
-					createSpawnAgentTool(options.team, undefined, options.spawnPolicy),
+					createSpawnAgentTool(options.team, undefined, options.spawnPolicy, options.roleDefaults),
 					createDelegateTaskTool(options.team),
 					createAskAgentTool(options.team, { selfRole: PLANNER_ROLE }),
 				];

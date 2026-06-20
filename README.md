@@ -69,11 +69,15 @@ Usage:
   hooteams start  [--config path] [--port 4242] [--resume] [--no-webui]  start the team server + live web UI
   hooteams plan   "<goal>" [--out tasks.json] [--model id]  plan a goal without executing (dry run)
   hooteams run    <tasks.json> [--detach] [--host …]        start a task-graph run
+  hooteams workflow init [--force]                          scaffold .agents/workflows/ from .agents/commands/*.md
+  hooteams workflow run <name> [--detach] [--host …]        run a named .agents/workflows/<name>.json (no planner)
+  hooteams workflow list [--host …]                         list available workflows
   hooteams pending [--host …]                               list approval gates awaiting an answer
   hooteams resume <taskId> "<option>" [--feedback "…"]      answer an approval gate
   hooteams attach <role> [--replay 50] [--host …]           attach this terminal to an agent
   hooteams nudge  <role> "<message>" [--host …]             inject a message mid-run
   hooteams status [--host …]                                all agents at a glance
+  hooteams cancel [--host …]                                abort the active run (server keeps running)
   hooteams stop   [--host …]                                stop the server gracefully
   hooteams help                                             show usage
 ```
@@ -192,6 +196,21 @@ Top-level file fields besides `tasks`: `goal` (what the run pursues — judged b
 
 Each task runs on a fresh agent with its own persisted session under `~/.hooteams/sessions`, with the human-in-the-loop protocol appended to its system prompt: an agent that needs a human decision ends its reply with `AWAITING_APPROVAL: <question> | <option1>, <option2>` and the task pauses (releasing its concurrency slot) until someone answers — from this CLI, `hoocode --team`, or the web UI. First answer wins.
 
+### `hooteams workflow`
+
+A **workflow** is a named, reusable task graph saved under `.agents/workflows/<name>.json`. It is the exact same document `hooteams run` accepts (`{ goal?, roles?, tasks }`), so a workflow is just a static plan you give a name and invoke by it — bypassing the planner entirely for deterministic pipelines.
+
+```bash
+hooteams workflow init              # generate .agents/workflows/*.json from .agents/commands/*.md
+hooteams workflow list              # discover .agents/workflows/*.json (name, task count, goal)
+hooteams workflow run example       # submit .agents/workflows/example.json and follow it
+hooteams workflow run example --detach   # submit and exit; the run keeps going server-side
+```
+
+`hooteams init` scaffolds a starter `.agents/workflows/example.json` — a `plan → build → review` pipeline wired to the team's roles. Edit the prompts and `deps` to fit your project. `workflow run` accepts a bare name (resolved to `.agents/workflows/<name>.json`) or an explicit `.json` path. The tasks reference roles by name, so they run on the agents your `team.json` defines without re-planning. Workflows are the deterministic counterpart to `hooteams work`: use `work` when you want the planner to design the graph, and a workflow when you already know the graph and want to replay it.
+
+**Commands → workflows.** A slash-command recipe (`.agents/commands/<name>.md` or `.claude/commands/<name>.md`) is a single-agent task: a markdown prompt body with optional frontmatter. `hooteams workflow init` turns each command into a named, single-task workflow — the command body becomes the task prompt, run on the team's planner role (or the first configured role) — so `hooteams workflow run <name>` replays it deterministically. Both the hoocode (`.agents/`) and Claude (`.claude/`) command layouts are scanned, with `.agents/` winning on name clashes. Existing workflow files are left untouched unless `--force`.
+
 ### `hooteams pending` / `hooteams resume`
 
 Inspect and answer the active run's approval gates.
@@ -258,6 +277,27 @@ tester   idle
 ```
 
 Agent statuses: `idle` · `thinking` · `streaming` · `tool` · `done` · `error`
+
+| Flag     | Default                      | Description     |
+|----------|------------------------------|-----------------|
+| `--host` | `http://localhost:4242`      | Bridge base URL |
+
+### `hooteams cancel`
+
+Abort the **active run** without taking the server down. It aborts the live
+agents (so they stop burning tokens), fails the unfinished tasks, and settles
+the run as failed — but the server, web UI, and previous runs stay up, ready for
+the next run. Tasks that already completed keep their output (surfaced as a
+partial-results summary), so nothing finished is lost. Use this for a hung or
+paused run instead of `hooteams stop`, which tears the whole server down.
+
+```bash
+hooteams cancel
+hooteams cancel --host http://remote:4242
+```
+
+Prints `no active run to cancel` when nothing is running, or `run already
+finished` if it settled first.
 
 | Flag     | Default                      | Description     |
 |----------|------------------------------|-----------------|

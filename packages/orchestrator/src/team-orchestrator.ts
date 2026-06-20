@@ -236,6 +236,15 @@ export class TeamOrchestrator {
 	private readonly completionGates = new Set<string>();
 	/** Resumed tasks waiting for a free slot, answer text included. */
 	private readonly resumeQueue: { taskId: string; text: string }[] = [];
+	/**
+	 * Correction feedback to inject into a node's NEXT dispatch, keyed by task id.
+	 * Set when the goal validator sends a task back for rework (or a reworked
+	 * node's dependents are re-run): composePrompt() appends it so the agent
+	 * actually sees why its previous output was rejected, instead of re-running
+	 * the identical prompt and producing the identical (still-unmet) output.
+	 * Consumed (deleted) the moment it is folded into a prompt.
+	 */
+	private readonly reworkFeedback = new Map<string, string>();
 	/** Gates restored from a previous run, re-surfaced on run(). */
 	private restoredApprovals: ApprovalRequest[] = [];
 	private slotsInUse = 0;
@@ -243,6 +252,8 @@ export class TeamOrchestrator {
 	private settle?: () => void;
 	private started = false;
 	private finished = false;
+	/** True once cancel() runs: suppresses further dispatch/settlement so the run winds down. */
+	private cancelled = false;
 
 	constructor(
 		private readonly dag: TaskDag,
@@ -326,6 +337,65 @@ export class TeamOrchestrator {
 	/** Unanswered approval gates, e.g. to replay to a reconnecting client. */
 	pendingApprovals(): ApprovalRequest[] {
 		return this.approvals.pendingRequests();
+	}
+
+	/**
+	 * Abort an in-flight run: stop dispatching new work, abort every live agent
+	 * (so it stops burning tokens), reject any pending approval gate, mark the
+	 * still-running/idle/paused nodes as errored, and settle the run as failed.
+	 * Already-done nodes keep their output, so partial results survive in the
+	 * trace and session. Idempotent and safe to call before run() resolves; a
+	 * no-op once the run has already finished. Returns true when it actually
+	 * cancelled an active run.
+	 */
+	cancel(reason = "run cancelled"): boolean {
+		if (this.finished || this.cancelled) return false;
+		this.cancelled = true;
+		// Stop any task blocked on a human decision from waiting forever.
+		this.approvals.rejectAll(reason);
+		// Tear down every live agent and mark its node errored. Snapshot the keys
+		// first: settleNode mutates this.active as it tears nodes down.
+		for (const taskId of [...this.active.keys()]) {
+			const active = this.active.get(taskId);
+			if (!active) continue;
+			try {
+				active.harness.abort?.();
+			} catch {
+				// Best-effort: aborting is opportunistic; settle the node regardless.
+			}
+			active.runSettled = true;
+			active.runActive = false;
+			this.clearRunTimeout(active);
+		}
+		// Mark any node not already done/error (running, paused, idle, blocked) as
+		// errored so the dag is complete and the run settles as failed.
+		for (const node of this.dag.all()) {
+			if (node.status !== "done" && node.status !== "error") {
+				this.dag.markFailed(node.id);
+			}
+		}
+		// Drop live advisors and clear in-memory bookkeeping.
+		for (const advisorId of [...this.advisors.keys()]) this.disposeAdvisor(advisorId);
+		for (const taskId of [...this.active.keys()]) {
+			const active = this.active.get(taskId);
+			this.active.delete(taskId);
+			if (!active) continue;
+			active.unsubscribe();
+			try {
+				active.dispose?.();
+			} catch {
+				// Cleanup is best-effort; a throwing dispose must not block cancellation.
+			}
+		}
+		this.publish({
+			type: "team_error",
+			error: reason,
+			role: "orchestrator",
+			agentId: this.runId,
+			ts: Date.now(),
+		});
+		this.finish(true);
+		return true;
 	}
 
 	/** Resolves when every session write issued so far has landed. */
@@ -443,6 +513,14 @@ export class TeamOrchestrator {
 		for (const t of tasks.values()) {
 			if (!t.role && trace.dag) t.role = trace.dag[t.taskId]?.role ?? "";
 			if (!t.status && trace.dag) t.status = trace.dag[t.taskId]?.status;
+			// A task that started but never recorded a task_end is still in flight.
+			// The last dag_state snapshot can lag (or predate the dispatch), leaving
+			// the fallback "idle" — report it as running so /trace and its consumers
+			// (web-UI DAG, hoocanvas) don't show a busy task as idle (R2-2). Settled
+			// statuses (done/error) and an explicit paused gate are left untouched.
+			if (t.startedAt !== undefined && t.endedAt === undefined && (t.status === undefined || t.status === "idle")) {
+				t.status = "streaming";
+			}
 		}
 		trace.tasks = [...tasks.values()];
 		return trace;
@@ -450,19 +528,29 @@ export class TeamOrchestrator {
 
 	/** Claim slots for resumed tasks first (a human is waiting), then ready nodes. */
 	private fill(): void {
+		// A cancelled run dispatches nothing further; cancel() drives the shutdown.
+		if (this.cancelled) return;
 		while (this.slotsInUse < this.maxConcurrent && this.resumeQueue.length > 0) {
 			const next = this.resumeQueue.shift()!;
 			this.slotsInUse++;
 			this.resumeNode(next.taskId, next.text);
 		}
+		let dispatched = false;
 		for (const node of this.dag.ready()) {
 			if (this.slotsInUse >= this.maxConcurrent) break;
 			this.slotsInUse++;
 			// Mark before the async compose/dispatch so a re-entrant fill() can't
 			// pick the same ready node twice.
 			this.dag.markRunning(node.id);
+			dispatched = true;
 			void this.dispatchReady(node);
 		}
+		// Snapshot the freshly-running nodes so the live dag_snapshot and the
+		// persisted dag_state reflect them as running, not idle. Without this the
+		// snapshot only refreshed on settle/pause, so /trace and the web-UI DAG
+		// showed an actively-running task as idle until it stopped (R2-2). Mirrors
+		// resumeNode(), which already snapshots right after markRunning.
+		if (dispatched) this.snapshotDag();
 	}
 
 	/**
@@ -498,6 +586,16 @@ export class TeamOrchestrator {
 		}
 		if (node.deps.length === 0 && this.memory?.bootstrapContext) {
 			parts.push(this.memory.bootstrapContext);
+		}
+		// A reworked node (validator verdict, or an upstream rework) carries the
+		// reason its last attempt was rejected; surface it so the agent corrects
+		// course instead of re-emitting the identical output. Consumed once.
+		const feedback = this.reworkFeedback.get(node.id);
+		if (feedback) {
+			this.reworkFeedback.delete(node.id);
+			parts.push(
+				`Your previous attempt at this task was rejected and must be redone. Address this feedback specifically — do not repeat the same output:\n${feedback}`,
+			);
 		}
 		return parts.join("\n\n");
 	}
@@ -750,6 +848,8 @@ export class TeamOrchestrator {
 	}
 
 	private onRunSettled(active: ActiveNode, err?: unknown): void {
+		// A cancelled run already settled every node; ignore a late harness result.
+		if (this.cancelled) return;
 		if (active.paused) {
 			// The run ended on the approval marker; resumeNode starts the next
 			// run when the answer arrives. (If the run errored while paused,
@@ -783,6 +883,9 @@ export class TeamOrchestrator {
 	}
 
 	private settleNode(taskId: string, failed: boolean, opts: { messages?: AgentMessage[]; error?: unknown; holdsSlot?: boolean }): void {
+		// cancel() already settled every node and finished the run; ignore stragglers
+		// (e.g. a rejected approval gate or a late dispatch error resolving after).
+		if (this.cancelled) return;
 		const node = this.dag.get(taskId);
 		// An advisor settling "done" keeps its agent live and adopted (a messaging
 		// target) until the run ends, instead of being torn down now. A failed
@@ -941,6 +1044,10 @@ export class TeamOrchestrator {
 		this.finished = true;
 		// Advisors stay live only for the duration of the run; release them all now.
 		for (const taskId of [...this.advisors.keys()]) this.disposeAdvisor(taskId);
+		// A failed run still produced work: surface what completed so an operator
+		// (and --loop's next plan) can build on the partial results instead of
+		// discarding everything because one dependent failed (R2-4).
+		if (failed) this.surfacePartialResults();
 		// Memory records before run_end persists and the dag event publishes, so
 		// anything that observes the run as settled can already bootstrap a
 		// follow-up run from this run's outputs.
@@ -958,6 +1065,42 @@ export class TeamOrchestrator {
 				return this.flush();
 			})
 			.then(this.settle);
+	}
+
+	/**
+	 * On a failed run, persist a structured partial-results summary and publish a
+	 * human-readable team_error so the completed upstream work isn't lost in the
+	 * noise (R2-4). Blocked tasks (never ran because a dependency failed) are
+	 * called out separately from the ones that actually errored, so it's clear
+	 * what is salvageable vs. what failed. The persisted `run_summary` entry lets
+	 * replay/trace consumers show the same breakdown.
+	 */
+	private surfacePartialResults(): void {
+		const nodes = this.dag.all();
+		const done = nodes.filter((node) => node.status === "done");
+		const errored = nodes.filter((node) => node.status === "error");
+		// Anything left unsettled (idle) after a failed run never ran because an
+		// upstream dependency failed — i.e. it was blocked.
+		const blocked = nodes.filter((node) => node.status !== "done" && node.status !== "error");
+		this.persist("run_summary", {
+			runId: this.runId,
+			status: "failed",
+			done: done.map((node) => ({ taskId: node.id, role: node.role, output: node.output })),
+			errored: errored.map((node) => ({ taskId: node.id, role: node.role })),
+			blocked: blocked.map((node) => ({ taskId: node.id, role: node.role })),
+			ts: Date.now(),
+		});
+		if (done.length === 0) return; // nothing salvageable to highlight
+		const summary =
+			`run failed but ${done.length} task(s) completed: ${done.map((node) => node.id).join(", ")}` +
+			(blocked.length > 0 ? ` — ${blocked.length} blocked: ${blocked.map((node) => node.id).join(", ")}` : "");
+		this.publish({
+			type: "team_error",
+			error: summary,
+			role: "orchestrator",
+			agentId: this.runId,
+			ts: Date.now(),
+		});
 	}
 
 	/** Record every settled task in shared memory. Best-effort: a failing store must not fail the run. */
@@ -1043,6 +1186,10 @@ export class TeamOrchestrator {
 			if (this.dag.get(dependentId)?.status !== "done") continue;
 			const dependent = this.dag.resetToIdle(dependentId);
 			const reason = `re-run: upstream "${node.id}" was reworked`;
+			// The dependent's re-run prompt explains why it's running again, so it
+			// rebuilds against the corrected upstream output rather than blindly
+			// repeating its prior work.
+			this.reworkFeedback.set(dependentId, reason);
 			this.persist("task_retry", { runId: this.runId, taskId: dependentId, attempt: dependent.attempts ?? 0, error: reason, ts: Date.now() });
 			this.publish({
 				type: "task_retried",
@@ -1054,6 +1201,9 @@ export class TeamOrchestrator {
 				ts: Date.now(),
 			});
 		}
+		// Carry the validator's reason into the reworked node's next dispatch so it
+		// fixes the specific gap instead of re-running its identical prompt (M1).
+		this.reworkFeedback.set(node.id, error);
 		this.retryNode(node, undefined, error, false);
 	}
 

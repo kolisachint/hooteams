@@ -39,6 +39,9 @@ function dotClass(status: RunInfo["status"]): string {
 			return "status-dot dot-ok";
 		case "error":
 			return "status-dot dot-err";
+		case "interrupted":
+			// Orphaned run (killed/crashed mid-run); didn't complete cleanly.
+			return "status-dot dot-err";
 		default:
 			return "status-dot dot-off";
 	}
