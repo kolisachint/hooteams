@@ -1,8 +1,8 @@
 import { Agent, type AgentMessage, type AgentTool, type StreamFn } from "@kolisachint/hoocode-agent-core";
-import { type Model, Type } from "@kolisachint/hoocode-ai";
+import { getModel, type Model, Type } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
 import type { TaskDag } from "@kolisachint/hooteams-dag";
-import { discoverHoocodeDefaults, resolveTeamModel } from "./auth.js";
+import { DEFAULT_PROVIDER, discoverHoocodeDefaults, resolveTeamModel } from "./auth.js";
 import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
 import { enforceSpawnPolicy, type SpawnPolicy } from "./spawn-policy.js";
 import type { Team } from "./team.js";
@@ -74,12 +74,40 @@ export interface RoleDefaults {
  * provider it may not match. Only when the planner names a provider explicitly
  * do we trust its model id for that provider (still falling back to the default
  * model if it left the id blank).
+ *
+ * This deliberately diverges from validateConfig(), which inherits provider and
+ * model independently for *static* roles. That path is correct there: a static
+ * role is human-authored and reviewed, so an explicit `model` with no `provider`
+ * is an intentional pairing with `defaults.provider` and must be honored. Only
+ * the dynamic, untrusted-LLM path couples the two. Hosts that backfill defaults
+ * onto per-run (planner-origin) roles should reuse this helper, not re-implement
+ * the independent form (see apps/server's withDefaults).
  */
-function applyRoleDefaults<T extends { provider?: string; model: string }>(config: T, defaults?: RoleDefaults): T {
+export function applyRoleDefaults<T extends { provider?: string; model: string }>(config: T, defaults?: RoleDefaults): T {
 	if (!config.provider) {
 		return { ...config, provider: defaults?.provider, model: defaults?.model || config.model };
 	}
 	return { ...config, model: config.model || defaults?.model || config.model };
+}
+
+/**
+ * Throw if the resolved provider/model pair won't resolve via getModel(), which
+ * does an exact id lookup. The live spawn path already fails fast inside
+ * Team.register (it calls resolveTeamModel and throws "Unknown model"); a
+ * dry-run plan records the role instead, so without this check a bad id would
+ * only surface when the worker is dispatched from the serialized plan. Throwing
+ * here surfaces it to the planner as a tool error at plan time, so it re-plans
+ * with a valid model.
+ */
+function assertModelResolves(config: { provider?: string; model: string }): void {
+	const provider = config.provider ?? DEFAULT_PROVIDER;
+	if (!getModel(provider as any, config.model as any)) {
+		throw new Error(
+			`Unknown model "${config.model}" for provider "${provider}". ` +
+				`Use a model id that exists for that provider (ids are provider-specific), ` +
+				`or omit both provider and model to inherit the team default.`,
+		);
+	}
 }
 
 /**
@@ -378,6 +406,10 @@ export function createPlanSpawnAgentTool(buffer: PlanBuffer, policy?: SpawnPolic
 				},
 				defaults,
 			);
+			// Catch an unresolvable model now (the live path validates in
+			// Team.register) so the planner re-plans instead of the run dying on
+			// dispatch from the serialized plan.
+			assertModelResolves(resolved);
 			if (!buffer.roles.some((role) => role.role === params.role)) {
 				buffer.roles.push(resolved);
 			}

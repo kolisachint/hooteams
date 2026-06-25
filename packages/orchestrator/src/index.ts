@@ -31,6 +31,7 @@ export { createNodeHarnessFactory, createValidatorAgent, HITL_SYSTEM_PROMPT, VAL
 export type { NodeHarnessFactoryOptions, ValidatorAgentOptions } from "./node-harness.js";
 export { Orchestrator } from "./orchestrator.js";
 export {
+	applyRoleDefaults,
 	askAgent,
 	createAskAgentTool,
 	createDelegateTaskTool,

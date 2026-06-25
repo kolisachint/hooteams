@@ -422,6 +422,45 @@ describe("POST /runs end to end", () => {
 		}
 	});
 
+	test("a per-run role with a guessed model but no provider takes the default model, not the guess", async () => {
+		// The planner often guesses a model id in anthropic's dash spelling while
+		// omitting the provider. Pinning that id onto the inherited github-copilot
+		// provider (which spells it with a dot) would miss getModel() and die on
+		// dispatch, so provider and model are inherited together as a pair.
+		const seen: RoleConfig[] = [];
+		const capturingResolve = (cfg: RoleConfig) => {
+			seen.push(cfg);
+			return fakeModel;
+		};
+		const plainStreamFn: StreamFn = (() => {
+			const stream = new MockAssistantStream() as unknown as AssistantMessageEventStream;
+			queueMicrotask(() => (stream as any).push({ type: "done", reason: "stop", message: assistantReply("a fine haiku") }));
+			return stream;
+		}) as StreamFn;
+		const running = startServer(
+			{ ...config, defaults: { provider: "github-copilot", model: "fake-model" } },
+			{ port: 0, logRuns: false, sessionsRoot, memoryRoot, allowAutonomous: true, teamOptions: { ...teamOptions, resolveModel: capturingResolve, streamFn: plainStreamFn } },
+		);
+		const base = `http://localhost:${running.port}`;
+		try {
+			const started = await fetch(`${base}/runs`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					roles: [{ role: "poet", systemPrompt: "you write haikus", model: "claude-sonnet-4-5" }],
+					tasks: [{ id: "draft", role: "poet", prompt: "write the haiku" }],
+				}),
+			});
+			expect(started.status).toBe(202);
+			await pollTraceSettled(base);
+			const poet = seen.find((cfg) => cfg.role === "poet");
+			expect(poet?.provider).toBe("github-copilot");
+			expect(poet?.model).toBe("fake-model");
+		} finally {
+			await running.stop();
+		}
+	});
+
 	test("a paused run survives a server restart with resumeInterrupted", async () => {
 		const restartRoot = mkdtempSync(join(tmpdir(), "hooteams-server-restart-"));
 		try {

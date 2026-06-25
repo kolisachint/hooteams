@@ -333,10 +333,12 @@ describe("per-role tools", () => {
 		expect(planner.planBuffer).toEqual({ roles: [], tasks: [] });
 
 		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		// The dry-run plan tool validates the model against the real registry
+		// (getModel), so use real ids here rather than the live path's fake id.
 		const first = await spawnTool.execute("call-1", {
 			role: "coder",
 			systemPrompt: "write code",
-			model: "fake-model",
+			model: "claude-opus-4-8",
 			task: "implement it",
 			taskId: "t-code",
 			retries: 1,
@@ -344,7 +346,7 @@ describe("per-role tools", () => {
 		await spawnTool.execute("call-2", {
 			role: "tester",
 			systemPrompt: "test code",
-			model: "fake-model",
+			model: "claude-opus-4-8",
 			task: "test it",
 			taskId: "t-test",
 			deps: ["t-code"],
@@ -360,7 +362,7 @@ describe("per-role tools", () => {
 		]);
 
 		// a clashing taskId gets a fresh id instead of overwriting
-		await spawnTool.execute("call-3", { role: "coder", systemPrompt: "write code", model: "fake-model", task: "more", taskId: "t-code" } as any);
+		await spawnTool.execute("call-3", { role: "coder", systemPrompt: "write code", model: "claude-opus-4-8", task: "more", taskId: "t-code" } as any);
 		expect(planner.planBuffer!.tasks.at(-1)?.id).toBe("t-code-2");
 		expect(planner.planBuffer!.roles.map((role) => role.role)).toEqual(["coder", "tester"]);
 

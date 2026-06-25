@@ -86,4 +86,26 @@ describe("Planner roleDefaults (R2-1)", () => {
 		// The tool reports the resolved model, not the planner's raw guess.
 		expect(result.details?.model).toBe("claude-sonnet-4.5");
 	});
+
+	test("a model that resolves for no provider is rejected at plan time so the planner re-plans", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			// Explicit provider, so the guessed id is trusted as-is — and it does
+			// not exist for github-copilot, which would otherwise die on dispatch.
+			roleDefaults: { provider: "github-copilot", model: "claude-sonnet-4.5" },
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		await expect(
+			spawnTool.execute("call-1", {
+				role: "coder",
+				systemPrompt: "write code",
+				model: "claude-sonnet-4-5",
+				provider: "github-copilot",
+				taskId: "t1",
+			} as any),
+		).rejects.toThrow(/Unknown model "claude-sonnet-4-5" for provider "github-copilot"/);
+		// Nothing was recorded into the plan; the planner can retry with a valid id.
+		expect(planner.planBuffer!.roles.find((role) => role.role === "coder")).toBeUndefined();
+	});
 });
