@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { TaskDag } from "@kolisachint/hooteams-dag";
 import { DEFAULT_PROVIDER, discoverHoocodeDefaults, resolveTeamModel } from "./auth.js";
 import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
-import { isModelCategory, type ModelCategories, resolveModelCategory } from "./model-categories.js";
+import { isModelCategory, MODEL_CATEGORIES, type ModelCategories, resolveModelCategory } from "./model-categories.js";
 import { enforceSpawnPolicy, type SpawnPolicy } from "./spawn-policy.js";
 import type { Team } from "./team.js";
 import { extractMessageText } from "./team-orchestrator.js";
@@ -598,6 +598,22 @@ function firstLine(text: string): string {
 	return line.length > 120 ? `${line.slice(0, 117)}…` : line;
 }
 
+/**
+ * Render the team's configured model tiers so the planner names a tier when it
+ * spawns a worker instead of guessing a concrete, provider-specific model id —
+ * the thing it gets wrong. Only configured tiers are listed (concrete ids are
+ * intentionally hidden so the planner stays in tier-space); an empty map yields
+ * "", and the planner falls back to the team default model.
+ */
+export function formatModelTiers(categories?: ModelCategories): string {
+	const configured = categories ? MODEL_CATEGORIES.filter((tier) => typeof categories[tier] === "string") : [];
+	if (configured.length === 0) return "";
+	return (
+		"\n\nWhen you spawn an agent, set its model to one of these capability tiers — chosen by how hard the task is — " +
+		`rather than a concrete model id (the team resolves each tier to the right model for its provider): ${configured.join(", ")}.`
+	);
+}
+
 export const PLANNER_ROLE = "planner";
 
 /**
@@ -628,10 +644,11 @@ export class Planner {
 			teamTools.push(createMemoryReadTool(options.memory), createMemoryWriteTool(options.memory, { role: PLANNER_ROLE }));
 		}
 		const roster = formatRoster(options.availableRoles ?? []);
+		const tiers = formatModelTiers(options.roleDefaults?.modelCategories);
 		this.agent = new Agent({
 			initialState: {
 				systemPrompt:
-					(options.systemPrompt ?? DEFAULT_PLANNER_PROMPT) + roster + (options.dryRun ? DRY_RUN_ADDENDUM : ""),
+					(options.systemPrompt ?? DEFAULT_PLANNER_PROMPT) + roster + tiers + (options.dryRun ? DRY_RUN_ADDENDUM : ""),
 				model,
 				thinkingLevel: options.thinkingLevel ?? "off",
 				tools: [...teamTools, ...(options.tools ?? [])],

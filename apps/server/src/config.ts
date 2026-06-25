@@ -1,4 +1,11 @@
-import type { RoleConfig, ThinkingLevel } from "@kolisachint/hooteams-orchestrator";
+import {
+	discoverModelCategories,
+	isModelCategory,
+	type ModelCategories,
+	resolveModelCategory,
+	type RoleConfig,
+	type ThinkingLevel,
+} from "@kolisachint/hooteams-orchestrator";
 import { basename, dirname, extname, join, resolve } from "node:path";
 
 /** Team-wide fallbacks applied to roles that don't set their own. */
@@ -168,7 +175,7 @@ function stripFrontmatter(text: string): string {
 	return (match ? text.slice(match[0].length) : text).trim();
 }
 
-export function validateConfig(raw: RawServerConfig, source: string): ServerConfig {
+export function validateConfig(raw: RawServerConfig, source: string, categories: ModelCategories = discoverModelCategories()): ServerConfig {
 	if (!Array.isArray(raw.team)) {
 		throw new Error(`${source}: "team" must be an array of role configs`);
 	}
@@ -186,7 +193,21 @@ export function validateConfig(raw: RawServerConfig, source: string): ServerConf
 		if (!hasInlinePrompt && !hasPromptFile) {
 			throw new Error(`${source}: role "${role.role}" needs a string "systemPrompt" or "systemPromptFile"`);
 		}
-		const model = role.model ?? defaults.model;
+		let model = role.model ?? defaults.model;
+		// A model named as a tier (fast/standard/capable) resolves through hoocode's
+		// modelCategories to a concrete id, the same way planner-spawned roles do, so
+		// tiers work in human-authored config too. An unconfigured tier falls back to
+		// defaults.model; if that is also unset the tier is unresolvable, so say so.
+		if (typeof model === "string" && isModelCategory(model)) {
+			const tier = model;
+			model = resolveModelCategory(tier, categories) ?? defaults.model;
+			if (typeof model !== "string") {
+				throw new Error(
+					`${source}: role "${role.role}" uses model tier "${tier}", which is not configured ` +
+						`(set settings.json modelCategories.${tier}) and "defaults.model" is not set`,
+				);
+			}
+		}
 		if (typeof model !== "string") {
 			throw new Error(`${source}: role "${role.role}" has no "model" and "defaults.model" is not set`);
 		}

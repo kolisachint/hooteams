@@ -96,6 +96,30 @@ describe("validateConfig", () => {
 			/role "x" has no "model"/,
 		);
 	});
+
+	test("resolves a static role's model tier through modelCategories", () => {
+		const config = validateConfig(
+			{ team: [{ role: "coder", systemPrompt: "code", model: "capable", provider: "github-copilot" }] },
+			"test",
+			{ capable: "claude-opus-4.8" },
+		);
+		expect(config.team[0]).toMatchObject({ model: "claude-opus-4.8", provider: "github-copilot" });
+	});
+
+	test("an unconfigured static-role tier falls back to defaults.model", () => {
+		const config = validateConfig(
+			{ defaults: { model: "claude-sonnet-4.5", provider: "github-copilot" }, team: [{ role: "coder", systemPrompt: "code", model: "capable" }] },
+			"test",
+			{ fast: "claude-haiku-4.5" },
+		);
+		expect(config.team[0]).toMatchObject({ model: "claude-sonnet-4.5", provider: "github-copilot" });
+	});
+
+	test("rejects an unconfigured static-role tier with no defaults.model", () => {
+		expect(() =>
+			validateConfig({ team: [{ role: "coder", systemPrompt: "code", model: "capable" }] }, "test", {}),
+		).toThrow(/uses model tier "capable", which is not configured/);
+	});
 });
 
 describe("startServer", () => {

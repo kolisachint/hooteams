@@ -39,6 +39,7 @@ export {
 	createPlanDelegateTaskTool,
 	createPlanSpawnAgentTool,
 	createSpawnAgentTool,
+	formatModelTiers,
 	formatRoster,
 	Planner,
 	PLANNER_ROLE,

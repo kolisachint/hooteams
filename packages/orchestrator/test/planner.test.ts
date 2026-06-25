@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { TeamChannel } from "../src/channel.js";
-import { formatRoster, Planner } from "../src/planner.js";
+import { formatModelTiers, formatRoster, Planner } from "../src/planner.js";
 import { Team } from "../src/team.js";
 import type { RoleConfig } from "../src/types.js";
 
@@ -107,6 +107,31 @@ describe("Planner roleDefaults (R2-1)", () => {
 		).rejects.toThrow(/Unknown model "claude-sonnet-4-5" for provider "github-copilot"/);
 		// Nothing was recorded into the plan; the planner can retry with a valid id.
 		expect(planner.planBuffer!.roles.find((role) => role.role === "coder")).toBeUndefined();
+	});
+});
+
+describe("formatModelTiers", () => {
+	test("lists only the configured tiers and hides concrete ids", () => {
+		const out = formatModelTiers({ fast: "claude-haiku-4.5", capable: "claude-opus-4.8" });
+		expect(out).toContain("fast, capable");
+		expect(out).not.toContain("standard");
+		// concrete ids are intentionally not shown — the planner stays in tier-space
+		expect(out).not.toContain("claude-opus-4.8");
+	});
+
+	test("is empty when no tiers are configured", () => {
+		expect(formatModelTiers({})).toBe("");
+		expect(formatModelTiers(undefined)).toBe("");
+	});
+
+	test("the planner prompt advertises the team's configured tiers", () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			roleDefaults: { provider: "github-copilot", model: "claude-sonnet-4.5", modelCategories: { capable: "claude-opus-4.8" } },
+		});
+		expect(planner.agent.state.systemPrompt as string).toContain("capability tiers");
+		expect(planner.agent.state.systemPrompt as string).toContain("capable");
 	});
 });
 
