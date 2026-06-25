@@ -57,13 +57,29 @@ export interface RoleDefaults {
 	model?: string;
 }
 
-/** Apply team defaults to a planner-built role config: inherit provider/model when the planner left them unset. */
+/**
+ * Apply team defaults to a planner-built role config.
+ *
+ * Provider and model are an inseparable pair: getModel() does an exact id
+ * lookup and the same model is spelled differently per provider (anthropic's
+ * "claude-sonnet-4-5" vs github-copilot's dotted "claude-sonnet-4.5"). The
+ * planner is an untrusted LLM that routinely guesses a model id in one
+ * provider's spelling while omitting the provider entirely. If we inherited the
+ * team's provider but kept that guessed id, getModel() would miss on dispatch
+ * and the worker would die with an unknown-model error.
+ *
+ * So inheritance is atomic. When the planner names no provider it has no
+ * provider context for its guess, so inherit BOTH the provider and the model
+ * from the team defaults — the guessed id is never pinned onto an inherited
+ * provider it may not match. Only when the planner names a provider explicitly
+ * do we trust its model id for that provider (still falling back to the default
+ * model if it left the id blank).
+ */
 function applyRoleDefaults<T extends { provider?: string; model: string }>(config: T, defaults?: RoleDefaults): T {
-	return {
-		...config,
-		provider: config.provider ?? defaults?.provider,
-		model: config.model || defaults?.model || config.model,
-	};
+	if (!config.provider) {
+		return { ...config, provider: defaults?.provider, model: defaults?.model || config.model };
+	}
+	return { ...config, model: config.model || defaults?.model || config.model };
 }
 
 /**
@@ -120,11 +136,13 @@ export function createSpawnAgentTool(team: Team, dag?: TaskDag, policy?: SpawnPo
 			const toolCount = agent.state.tools.length;
 			const toolNote = toolCount > 0 ? ` with ${toolCount} tools` : "";
 			const note = params.task ? ` and started on its first task` : "";
+			// Report the resolved model, not the planner's raw guess: when the
+			// provider was inherited the model came from team defaults too.
 			return {
-				content: [{ type: "text", text: `Spawned agent "${params.role}" (${params.model})${toolNote}${note}.` }],
+				content: [{ type: "text", text: `Spawned agent "${params.role}" (${config.model})${toolNote}${note}.` }],
 				details: {
 					role: params.role,
-					model: params.model,
+					model: config.model,
 					tools: toolCount,
 					started: Boolean(params.task),
 					taskId: params.taskId,
@@ -348,21 +366,20 @@ export function createPlanSpawnAgentTool(buffer: PlanBuffer, policy?: SpawnPolic
 				{ role: params.role, defaultTools: params.defaultTools, mcpConfigPath: params.mcpConfigPath, cwd: params.cwd },
 				policy,
 			);
+			const resolved = applyRoleDefaults(
+				{
+					role: params.role,
+					systemPrompt: params.systemPrompt,
+					model: params.model,
+					provider: params.provider,
+					defaultTools: params.defaultTools,
+					mcpConfigPath: params.mcpConfigPath,
+					cwd: params.cwd,
+				},
+				defaults,
+			);
 			if (!buffer.roles.some((role) => role.role === params.role)) {
-				buffer.roles.push(
-					applyRoleDefaults(
-						{
-							role: params.role,
-							systemPrompt: params.systemPrompt,
-							model: params.model,
-							provider: params.provider,
-							defaultTools: params.defaultTools,
-							mcpConfigPath: params.mcpConfigPath,
-							cwd: params.cwd,
-						},
-						defaults,
-					),
-				);
+				buffer.roles.push(resolved);
 			}
 			let taskId: string | undefined;
 			if (params.task || params.taskId) {
@@ -377,9 +394,10 @@ export function createPlanSpawnAgentTool(buffer: PlanBuffer, policy?: SpawnPolic
 				});
 			}
 			const note = taskId ? ` with task "${taskId}"` : "";
+			// Report the resolved model so the plan reflects the inherited default.
 			return {
-				content: [{ type: "text", text: `Planned agent "${params.role}" (${params.model})${note}. Nothing was spawned (dry run).` }],
-				details: { role: params.role, model: params.model, taskId, dryRun: true },
+				content: [{ type: "text", text: `Planned agent "${params.role}" (${resolved.model})${note}. Nothing was spawned (dry run).` }],
+				details: { role: params.role, model: resolved.model, taskId, dryRun: true },
 			};
 		},
 	};

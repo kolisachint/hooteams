@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Planner role inheritance now treats provider and model as an atomic pair. The planner is an LLM that routinely guesses a model id in one provider's spelling (e.g. anthropic's dashed `claude-sonnet-4-5`) while omitting the provider. `applyRoleDefaults` previously inherited the team's default provider but kept that guessed id, so a team on `github-copilot` (which spells the model `claude-sonnet-4.5`, with a dot) got a role pinned to a provider/model mismatch that `getModel()`'s exact lookup missed, killing the worker on dispatch with an unknown-model error. Now, when the planner names no provider it has no provider context for its guess, so **both** the provider and the model are inherited from the team defaults; an explicitly named provider still keeps the planner's model id. `createSpawnAgentTool`/`createPlanSpawnAgentTool` also report the resolved model rather than the raw guess.
+
 ## [0.1.35] - 2026-06-20
 
 ## [0.1.34] - 2026-06-20

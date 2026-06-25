@@ -67,4 +67,23 @@ describe("Planner roleDefaults (R2-1)", () => {
 		expect(planned.provider).toBe("openai");
 		expect(planned.model).toBe("gpt-5");
 	});
+
+	test("a guessed model with no provider is replaced by the default, not pinned to the inherited provider", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			// github-copilot spells the model with a dot ("claude-sonnet-4.5").
+			roleDefaults: { provider: "github-copilot", model: "claude-sonnet-4.5" },
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		// The planner guesses the anthropic dash spelling and omits the provider.
+		// Keeping that id against the inherited github-copilot provider would make
+		// getModel() miss on dispatch, so both must come from the team default.
+		const result = await spawnTool.execute("call-1", { role: "coder", systemPrompt: "write code", model: "claude-sonnet-4-5", taskId: "t1" } as any);
+		const planned = planner.planBuffer!.roles.find((role) => role.role === "coder")!;
+		expect(planned.provider).toBe("github-copilot");
+		expect(planned.model).toBe("claude-sonnet-4.5");
+		// The tool reports the resolved model, not the planner's raw guess.
+		expect(result.details?.model).toBe("claude-sonnet-4.5");
+	});
 });
