@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.36] - 2026-06-25
 
 ### Added
 - Model **tiers**, mirroring hoocode's `settings.json` `modelCategories`. A role's `model` may now be a tier — `fast`, `standard`, or `capable` — instead of a concrete id. A tier is provider-agnostic: it resolves through the team's configured `modelCategories` to the same concrete, provider-correct id hoocode itself would use, so the planner (an LLM) can pick *how capable* a worker needs to be without ever authoring a provider-specific model string — which is the spelling it gets wrong. This retires the dash/dot mismatch class at the root rather than guarding it. An unconfigured tier is a no-op that falls back to the team default model (hoocode's `resolveModelCategory` semantic); a tier that resolves to nothing and has no default is rejected with a tier-specific message. New module `model-categories.ts` (`MODEL_CATEGORIES`, `ModelCategory`, `ModelCategories`, `isModelCategory`, `resolveModelCategory`) and `discoverModelCategories()` (reads the same hoocode `settings.json` as `discoverHoocodeDefaults`). `RoleDefaults` gains `modelCategories`; the CLI plan path and the server's per-run-role backfill both populate it. The `spawn_agent` `model` param description now steers the planner toward tiers.
