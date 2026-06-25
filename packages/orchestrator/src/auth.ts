@@ -4,6 +4,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import lockfile from "proper-lockfile";
+import { MODEL_CATEGORIES, type ModelCategories } from "./model-categories.js";
 
 /** Mirrors the entry shapes hoocode writes to ~/.hoocode/auth.json. */
 export type AuthCredential = { type: "api_key"; key: string } | ({ type: "oauth" } & OAuthCredentials);
@@ -65,6 +66,35 @@ export function discoverHoocodeDefaults(settingsPath?: string): { provider: stri
 		// Unreadable/malformed settings — fall back silently.
 	}
 	return { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL };
+}
+
+/**
+ * Discover hoocode's model tiers (`modelCategories`: fast/standard/capable ->
+ * model id) from settings.json, so a team resolves a planner-chosen tier to the
+ * same concrete model hoocode itself would. Reads the same settings.json as
+ * discoverHoocodeDefaults. Absent, malformed, or partial config yields a map
+ * with only the string-valued tiers, making every other tier an unconfigured
+ * no-op (the caller keeps its default model).
+ */
+export function discoverModelCategories(settingsPath?: string): ModelCategories {
+	const path = settingsPath ?? join(hoocodeAgentDir(), "settings.json");
+	try {
+		if (existsSync(path)) {
+			const settings = JSON.parse(readFileSync(path, "utf-8")) as { modelCategories?: unknown };
+			const raw = settings.modelCategories;
+			if (raw && typeof raw === "object") {
+				const out: ModelCategories = {};
+				for (const category of MODEL_CATEGORIES) {
+					const value = (raw as Record<string, unknown>)[category];
+					if (typeof value === "string") out[category] = value;
+				}
+				return out;
+			}
+		}
+	} catch {
+		// Unreadable/malformed settings — no tiers configured.
+	}
+	return {};
 }
 
 function readAuthFile(authPath: string): AuthFileData {

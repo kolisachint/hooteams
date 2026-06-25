@@ -13,6 +13,7 @@ import {
 	DEFAULT_MODEL,
 	DEFAULT_PROVIDER,
 	discoverHoocodeDefaults,
+	discoverModelCategories,
 	resolveTeamModel,
 } from "../src/auth.js";
 
@@ -143,6 +144,32 @@ describe("discoverHoocodeDefaults", () => {
 		const path = join(dir, "settings.json");
 		writeFileSync(path, "{ not valid json", "utf-8");
 		expect(discoverHoocodeDefaults(path)).toEqual({ provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL });
+	});
+});
+
+describe("discoverModelCategories", () => {
+	function writeSettings(settings: Record<string, unknown>): string {
+		const path = join(dir, "settings.json");
+		writeFileSync(path, JSON.stringify(settings), "utf-8");
+		return path;
+	}
+
+	test("reads the configured tiers from settings.json", () => {
+		const path = writeSettings({ modelCategories: { fast: "claude-haiku-4.5", capable: "claude-opus-4.8" } });
+		expect(discoverModelCategories(path)).toEqual({ fast: "claude-haiku-4.5", capable: "claude-opus-4.8" });
+	});
+
+	test("ignores unknown keys and non-string tier values", () => {
+		const path = writeSettings({ modelCategories: { fast: "claude-haiku-4.5", standard: 42, bogus: "x" } });
+		expect(discoverModelCategories(path)).toEqual({ fast: "claude-haiku-4.5" });
+	});
+
+	test("returns an empty map when modelCategories is absent, the file is missing, or malformed", () => {
+		expect(discoverModelCategories(writeSettings({ defaultProvider: "openai" }))).toEqual({});
+		expect(discoverModelCategories(join(dir, "missing", "settings.json"))).toEqual({});
+		const bad = join(dir, "settings.json");
+		writeFileSync(bad, "{ not valid json", "utf-8");
+		expect(discoverModelCategories(bad)).toEqual({});
 	});
 });
 

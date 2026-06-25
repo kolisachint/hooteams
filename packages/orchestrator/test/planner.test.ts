@@ -109,3 +109,52 @@ describe("Planner roleDefaults (R2-1)", () => {
 		expect(planner.planBuffer!.roles.find((role) => role.role === "coder")).toBeUndefined();
 	});
 });
+
+describe("Planner model tiers (fast/standard/capable)", () => {
+	test("a tier resolves to the team's configured model for that tier, paired with the default provider", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			roleDefaults: {
+				provider: "github-copilot",
+				model: "claude-sonnet-4.5",
+				// The tier maps to the provider-correct (dotted) id; the planner never
+				// has to author that spelling.
+				modelCategories: { capable: "claude-opus-4.8" },
+			},
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		const result = await spawnTool.execute("call-1", { role: "coder", systemPrompt: "write code", model: "capable", taskId: "t1" } as any);
+		const planned = planner.planBuffer!.roles.find((role) => role.role === "coder")!;
+		expect(planned.provider).toBe("github-copilot");
+		expect(planned.model).toBe("claude-opus-4.8");
+		expect(result.details?.model).toBe("claude-opus-4.8");
+	});
+
+	test("an unconfigured tier falls back to the team default model (no-op)", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			// "capable" is not configured, so it falls back to the default model.
+			roleDefaults: { provider: "github-copilot", model: "claude-sonnet-4.5", modelCategories: { fast: "claude-haiku-4.5" } },
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		await spawnTool.execute("call-1", { role: "coder", systemPrompt: "write code", model: "capable", taskId: "t1" } as any);
+		const planned = planner.planBuffer!.roles.find((role) => role.role === "coder")!;
+		expect(planned.provider).toBe("github-copilot");
+		expect(planned.model).toBe("claude-sonnet-4.5");
+	});
+
+	test("an unconfigured tier with no team default model is rejected with a tier-specific message", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			roleDefaults: { provider: "github-copilot" },
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		await expect(
+			spawnTool.execute("call-1", { role: "coder", systemPrompt: "write code", model: "capable", taskId: "t1" } as any),
+		).rejects.toThrow(/Model tier "capable" is not configured/);
+		expect(planner.planBuffer!.roles.find((role) => role.role === "coder")).toBeUndefined();
+	});
+});

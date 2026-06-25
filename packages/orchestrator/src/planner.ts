@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { TaskDag } from "@kolisachint/hooteams-dag";
 import { DEFAULT_PROVIDER, discoverHoocodeDefaults, resolveTeamModel } from "./auth.js";
 import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
+import { isModelCategory, type ModelCategories, resolveModelCategory } from "./model-categories.js";
 import { enforceSpawnPolicy, type SpawnPolicy } from "./spawn-policy.js";
 import type { Team } from "./team.js";
 import { extractMessageText } from "./team-orchestrator.js";
@@ -12,7 +13,12 @@ import type { RoleConfig, ThinkingLevel } from "./types.js";
 const spawnAgentParams = Type.Object({
 	role: Type.String({ description: "Unique role name for the new agent, e.g. coder, tester" }),
 	systemPrompt: Type.String({ description: "System prompt defining the agent's responsibilities" }),
-	model: Type.String({ description: "Model id the agent should use, e.g. claude-sonnet-4-5" }),
+	model: Type.String({
+		description:
+			"Model for the agent. Prefer a capability tier — \"fast\", \"standard\", or \"capable\" — chosen by how hard the task is; " +
+			"the team resolves it to the right model for its provider. A concrete model id (e.g. claude-sonnet-4-5) also works " +
+			"but is provider-specific, so a tier is safer.",
+	}),
 	provider: Type.Optional(Type.String({ description: "Model provider, defaults to anthropic" })),
 	task: Type.Optional(Type.String({ description: "If given, immediately prompt the new agent with this task" })),
 	taskId: Type.Optional(
@@ -55,6 +61,14 @@ const spawnAgentParams = Type.Object({
 export interface RoleDefaults {
 	provider?: string;
 	model?: string;
+	/**
+	 * Tier -> concrete model id map (hoocode's `modelCategories`). When the planner
+	 * names a tier (fast/standard/capable) as the model, it resolves through this
+	 * to a concrete, provider-correct id; an unconfigured tier falls back to
+	 * `model`. Lets the planner pick *how capable* a worker is without authoring a
+	 * provider-specific model string.
+	 */
+	modelCategories?: ModelCategories;
 }
 
 /**
@@ -75,6 +89,14 @@ export interface RoleDefaults {
  * do we trust its model id for that provider (still falling back to the default
  * model if it left the id blank).
  *
+ * A model named as a *tier* (fast/standard/capable) is the exception, and the
+ * preferred path: a tier is provider-agnostic, so it is resolved through the
+ * team's `modelCategories` to a concrete, provider-correct id regardless of
+ * whether a provider was given. An unconfigured tier is a no-op that falls back
+ * to the default model. Because the planner never authored a provider-specific
+ * string, the spelling can't be wrong — this retires the mismatch at the root
+ * rather than guarding it.
+ *
  * This deliberately diverges from validateConfig(), which inherits provider and
  * model independently for *static* roles. That path is correct there: a static
  * role is human-authored and reviewed, so an explicit `model` with no `provider`
@@ -84,8 +106,13 @@ export interface RoleDefaults {
  * the independent form (see apps/server's withDefaults).
  */
 export function applyRoleDefaults<T extends { provider?: string; model: string }>(config: T, defaults?: RoleDefaults): T {
+	const provider = config.provider ?? defaults?.provider;
+	if (isModelCategory(config.model)) {
+		const model = resolveModelCategory(config.model, defaults?.modelCategories) ?? defaults?.model ?? config.model;
+		return { ...config, provider, model };
+	}
 	if (!config.provider) {
-		return { ...config, provider: defaults?.provider, model: defaults?.model || config.model };
+		return { ...config, provider, model: defaults?.model || config.model };
 	}
 	return { ...config, model: config.model || defaults?.model || config.model };
 }
@@ -100,11 +127,22 @@ export function applyRoleDefaults<T extends { provider?: string; model: string }
  * with a valid model.
  */
 function assertModelResolves(config: { provider?: string; model: string }): void {
+	// A still-bare tier means applyRoleDefaults couldn't resolve it (the team
+	// configured no model for that tier and has no default) — a config gap, not a
+	// bad guess, so say so plainly instead of "unknown model".
+	if (isModelCategory(config.model)) {
+		throw new Error(
+			`Model tier "${config.model}" is not configured for this team ` +
+				`(set settings.json modelCategories.${config.model}), and there is no team default model to fall back to. ` +
+				`Configure the tier or name a concrete model id.`,
+		);
+	}
 	const provider = config.provider ?? DEFAULT_PROVIDER;
 	if (!getModel(provider as any, config.model as any)) {
 		throw new Error(
 			`Unknown model "${config.model}" for provider "${provider}". ` +
 				`Use a model id that exists for that provider (ids are provider-specific), ` +
+				`a model tier (fast/standard/capable) the team has configured, ` +
 				`or omit both provider and model to inherit the team default.`,
 		);
 	}
