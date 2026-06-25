@@ -1,7 +1,9 @@
 import { createRouter, type HitlRun, RunRejectedError, SSEBridge, type StartRunRequest, type StartRunTask } from "@kolisachint/hooteams-bridge";
 import {
+	applyRoleDefaults,
 	createAskAgentTool,
 	createHoocodeAuth,
+	discoverModelCategories,
 	createMemoryReadTool,
 	createMemoryWriteTool,
 	createNodeHarnessFactory,
@@ -127,14 +129,17 @@ export function startServer(config: ServerConfig, options: StartOptions = {}): R
 	};
 
 	// Per-run roles (e.g. a dry-run plan's roles) bypass validateConfig(), so they
-	// never had config.defaults applied. Backfill provider/model/thinkingLevel the
-	// same way static roles get them, so a planner-spawned role inherits the team's
-	// provider instead of falling back to anthropic and failing to resolve its
-	// model id (R2-1).
+	// never had config.defaults applied. These are dynamic, planner-origin roles,
+	// so backfill provider/model with applyRoleDefaults — which couples them as a
+	// pair: a planner-guessed model id (often in another provider's spelling) is
+	// never pinned onto an inherited provider it may not match, which would make
+	// getModel() miss and the worker die on dispatch. A model named as a tier
+	// (fast/standard/capable) resolves through hoocode's modelCategories to a
+	// concrete id. thinkingLevel has no provider coupling, so it inherits
+	// independently.
+	const roleDefaults = { ...config.defaults, modelCategories: discoverModelCategories() };
 	const withDefaults = (role: RoleConfig): RoleConfig => ({
-		...role,
-		model: role.model || config.defaults?.model || role.model,
-		provider: role.provider ?? config.defaults?.provider,
+		...applyRoleDefaults(role, roleDefaults),
 		thinkingLevel: role.thinkingLevel ?? config.defaults?.thinkingLevel,
 	});
 

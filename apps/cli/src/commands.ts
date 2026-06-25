@@ -1,6 +1,7 @@
 import {
 	createHoocodeAuth,
 	discoverHoocodeDefaults,
+	discoverModelCategories,
 	Planner,
 	resolveTeamModel,
 	type RoleConfig,
@@ -428,8 +429,10 @@ export async function runPlanner(goal: string, modelId?: string, provider?: stri
 		getApiKey,
 		availableRoles,
 		// Carry the team's provider/model so dynamically-planned roles inherit the
-		// configured provider instead of falling back to anthropic (R2-1).
-		roleDefaults: { provider: resolvedProvider, model: resolvedModelId },
+		// configured provider instead of falling back to anthropic (R2-1), plus the
+		// hoocode model tiers so a planner-chosen "fast"/"standard"/"capable"
+		// resolves to a concrete, provider-correct id.
+		roleDefaults: { provider: resolvedProvider, model: resolvedModelId, modelCategories: discoverModelCategories() },
 		model: resolvedModelId ? resolveTeamModel(resolvedProvider ?? "anthropic", resolvedModelId) : undefined,
 	});
 	await planner.plan(goal);

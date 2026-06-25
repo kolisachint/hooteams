@@ -12,6 +12,7 @@ export {
 	DEFAULT_PROVIDER,
 	defaultAuthPath,
 	discoverHoocodeDefaults,
+	discoverModelCategories,
 	hoocodeAgentDir,
 	resolveTeamModel,
 } from "./auth.js";
@@ -31,17 +32,21 @@ export { createNodeHarnessFactory, createValidatorAgent, HITL_SYSTEM_PROMPT, VAL
 export type { NodeHarnessFactoryOptions, ValidatorAgentOptions } from "./node-harness.js";
 export { Orchestrator } from "./orchestrator.js";
 export {
+	applyRoleDefaults,
 	askAgent,
 	createAskAgentTool,
 	createDelegateTaskTool,
 	createPlanDelegateTaskTool,
 	createPlanSpawnAgentTool,
 	createSpawnAgentTool,
+	formatModelTiers,
 	formatRoster,
 	Planner,
 	PLANNER_ROLE,
 } from "./planner.js";
 export type { AskAgentOptions, PlanBuffer, PlannedTask, PlannerOptions, RoleDefaults } from "./planner.js";
+export { isModelCategory, MODEL_CATEGORIES, resolveModelCategory } from "./model-categories.js";
+export type { ModelCategories, ModelCategory } from "./model-categories.js";
 export { enforceSpawnPolicy, resolveSpawnPolicy } from "./spawn-policy.js";
 export type { SpawnPolicy, SpawnRequest } from "./spawn-policy.js";
 export { Team } from "./team.js";

@@ -1,9 +1,10 @@
 import { Agent, type AgentMessage, type AgentTool, type StreamFn } from "@kolisachint/hoocode-agent-core";
-import { type Model, Type } from "@kolisachint/hoocode-ai";
+import { getModel, type Model, Type } from "@kolisachint/hoocode-ai";
 import { randomUUID } from "node:crypto";
 import type { TaskDag } from "@kolisachint/hooteams-dag";
-import { discoverHoocodeDefaults, resolveTeamModel } from "./auth.js";
+import { DEFAULT_PROVIDER, discoverHoocodeDefaults, resolveTeamModel } from "./auth.js";
 import { createMemoryReadTool, createMemoryWriteTool, type TeamMemory } from "./memory.js";
+import { isModelCategory, MODEL_CATEGORIES, type ModelCategories, resolveModelCategory } from "./model-categories.js";
 import { enforceSpawnPolicy, type SpawnPolicy } from "./spawn-policy.js";
 import type { Team } from "./team.js";
 import { extractMessageText } from "./team-orchestrator.js";
@@ -12,7 +13,12 @@ import type { RoleConfig, ThinkingLevel } from "./types.js";
 const spawnAgentParams = Type.Object({
 	role: Type.String({ description: "Unique role name for the new agent, e.g. coder, tester" }),
 	systemPrompt: Type.String({ description: "System prompt defining the agent's responsibilities" }),
-	model: Type.String({ description: "Model id the agent should use, e.g. claude-sonnet-4-5" }),
+	model: Type.String({
+		description:
+			"Model for the agent. Prefer a capability tier — \"fast\", \"standard\", or \"capable\" — chosen by how hard the task is; " +
+			"the team resolves it to the right model for its provider. A concrete model id (e.g. claude-sonnet-4-5) also works " +
+			"but is provider-specific, so a tier is safer.",
+	}),
 	provider: Type.Optional(Type.String({ description: "Model provider, defaults to anthropic" })),
 	task: Type.Optional(Type.String({ description: "If given, immediately prompt the new agent with this task" })),
 	taskId: Type.Optional(
@@ -55,15 +61,91 @@ const spawnAgentParams = Type.Object({
 export interface RoleDefaults {
 	provider?: string;
 	model?: string;
+	/**
+	 * Tier -> concrete model id map (hoocode's `modelCategories`). When the planner
+	 * names a tier (fast/standard/capable) as the model, it resolves through this
+	 * to a concrete, provider-correct id; an unconfigured tier falls back to
+	 * `model`. Lets the planner pick *how capable* a worker is without authoring a
+	 * provider-specific model string.
+	 */
+	modelCategories?: ModelCategories;
 }
 
-/** Apply team defaults to a planner-built role config: inherit provider/model when the planner left them unset. */
-function applyRoleDefaults<T extends { provider?: string; model: string }>(config: T, defaults?: RoleDefaults): T {
-	return {
-		...config,
-		provider: config.provider ?? defaults?.provider,
-		model: config.model || defaults?.model || config.model,
-	};
+/**
+ * Apply team defaults to a planner-built role config.
+ *
+ * Provider and model are an inseparable pair: getModel() does an exact id
+ * lookup and the same model is spelled differently per provider (anthropic's
+ * "claude-sonnet-4-5" vs github-copilot's dotted "claude-sonnet-4.5"). The
+ * planner is an untrusted LLM that routinely guesses a model id in one
+ * provider's spelling while omitting the provider entirely. If we inherited the
+ * team's provider but kept that guessed id, getModel() would miss on dispatch
+ * and the worker would die with an unknown-model error.
+ *
+ * So inheritance is atomic. When the planner names no provider it has no
+ * provider context for its guess, so inherit BOTH the provider and the model
+ * from the team defaults — the guessed id is never pinned onto an inherited
+ * provider it may not match. Only when the planner names a provider explicitly
+ * do we trust its model id for that provider (still falling back to the default
+ * model if it left the id blank).
+ *
+ * A model named as a *tier* (fast/standard/capable) is the exception, and the
+ * preferred path: a tier is provider-agnostic, so it is resolved through the
+ * team's `modelCategories` to a concrete, provider-correct id regardless of
+ * whether a provider was given. An unconfigured tier is a no-op that falls back
+ * to the default model. Because the planner never authored a provider-specific
+ * string, the spelling can't be wrong — this retires the mismatch at the root
+ * rather than guarding it.
+ *
+ * This deliberately diverges from validateConfig(), which inherits provider and
+ * model independently for *static* roles. That path is correct there: a static
+ * role is human-authored and reviewed, so an explicit `model` with no `provider`
+ * is an intentional pairing with `defaults.provider` and must be honored. Only
+ * the dynamic, untrusted-LLM path couples the two. Hosts that backfill defaults
+ * onto per-run (planner-origin) roles should reuse this helper, not re-implement
+ * the independent form (see apps/server's withDefaults).
+ */
+export function applyRoleDefaults<T extends { provider?: string; model: string }>(config: T, defaults?: RoleDefaults): T {
+	const provider = config.provider ?? defaults?.provider;
+	if (isModelCategory(config.model)) {
+		const model = resolveModelCategory(config.model, defaults?.modelCategories) ?? defaults?.model ?? config.model;
+		return { ...config, provider, model };
+	}
+	if (!config.provider) {
+		return { ...config, provider, model: defaults?.model || config.model };
+	}
+	return { ...config, model: config.model || defaults?.model || config.model };
+}
+
+/**
+ * Throw if the resolved provider/model pair won't resolve via getModel(), which
+ * does an exact id lookup. The live spawn path already fails fast inside
+ * Team.register (it calls resolveTeamModel and throws "Unknown model"); a
+ * dry-run plan records the role instead, so without this check a bad id would
+ * only surface when the worker is dispatched from the serialized plan. Throwing
+ * here surfaces it to the planner as a tool error at plan time, so it re-plans
+ * with a valid model.
+ */
+function assertModelResolves(config: { provider?: string; model: string }): void {
+	// A still-bare tier means applyRoleDefaults couldn't resolve it (the team
+	// configured no model for that tier and has no default) — a config gap, not a
+	// bad guess, so say so plainly instead of "unknown model".
+	if (isModelCategory(config.model)) {
+		throw new Error(
+			`Model tier "${config.model}" is not configured for this team ` +
+				`(set settings.json modelCategories.${config.model}), and there is no team default model to fall back to. ` +
+				`Configure the tier or name a concrete model id.`,
+		);
+	}
+	const provider = config.provider ?? DEFAULT_PROVIDER;
+	if (!getModel(provider as any, config.model as any)) {
+		throw new Error(
+			`Unknown model "${config.model}" for provider "${provider}". ` +
+				`Use a model id that exists for that provider (ids are provider-specific), ` +
+				`a model tier (fast/standard/capable) the team has configured, ` +
+				`or omit both provider and model to inherit the team default.`,
+		);
+	}
 }
 
 /**
@@ -120,11 +202,13 @@ export function createSpawnAgentTool(team: Team, dag?: TaskDag, policy?: SpawnPo
 			const toolCount = agent.state.tools.length;
 			const toolNote = toolCount > 0 ? ` with ${toolCount} tools` : "";
 			const note = params.task ? ` and started on its first task` : "";
+			// Report the resolved model, not the planner's raw guess: when the
+			// provider was inherited the model came from team defaults too.
 			return {
-				content: [{ type: "text", text: `Spawned agent "${params.role}" (${params.model})${toolNote}${note}.` }],
+				content: [{ type: "text", text: `Spawned agent "${params.role}" (${config.model})${toolNote}${note}.` }],
 				details: {
 					role: params.role,
-					model: params.model,
+					model: config.model,
 					tools: toolCount,
 					started: Boolean(params.task),
 					taskId: params.taskId,
@@ -348,21 +432,24 @@ export function createPlanSpawnAgentTool(buffer: PlanBuffer, policy?: SpawnPolic
 				{ role: params.role, defaultTools: params.defaultTools, mcpConfigPath: params.mcpConfigPath, cwd: params.cwd },
 				policy,
 			);
+			const resolved = applyRoleDefaults(
+				{
+					role: params.role,
+					systemPrompt: params.systemPrompt,
+					model: params.model,
+					provider: params.provider,
+					defaultTools: params.defaultTools,
+					mcpConfigPath: params.mcpConfigPath,
+					cwd: params.cwd,
+				},
+				defaults,
+			);
+			// Catch an unresolvable model now (the live path validates in
+			// Team.register) so the planner re-plans instead of the run dying on
+			// dispatch from the serialized plan.
+			assertModelResolves(resolved);
 			if (!buffer.roles.some((role) => role.role === params.role)) {
-				buffer.roles.push(
-					applyRoleDefaults(
-						{
-							role: params.role,
-							systemPrompt: params.systemPrompt,
-							model: params.model,
-							provider: params.provider,
-							defaultTools: params.defaultTools,
-							mcpConfigPath: params.mcpConfigPath,
-							cwd: params.cwd,
-						},
-						defaults,
-					),
-				);
+				buffer.roles.push(resolved);
 			}
 			let taskId: string | undefined;
 			if (params.task || params.taskId) {
@@ -377,9 +464,10 @@ export function createPlanSpawnAgentTool(buffer: PlanBuffer, policy?: SpawnPolic
 				});
 			}
 			const note = taskId ? ` with task "${taskId}"` : "";
+			// Report the resolved model so the plan reflects the inherited default.
 			return {
-				content: [{ type: "text", text: `Planned agent "${params.role}" (${params.model})${note}. Nothing was spawned (dry run).` }],
-				details: { role: params.role, model: params.model, taskId, dryRun: true },
+				content: [{ type: "text", text: `Planned agent "${params.role}" (${resolved.model})${note}. Nothing was spawned (dry run).` }],
+				details: { role: params.role, model: resolved.model, taskId, dryRun: true },
 			};
 		},
 	};
@@ -510,6 +598,22 @@ function firstLine(text: string): string {
 	return line.length > 120 ? `${line.slice(0, 117)}…` : line;
 }
 
+/**
+ * Render the team's configured model tiers so the planner names a tier when it
+ * spawns a worker instead of guessing a concrete, provider-specific model id —
+ * the thing it gets wrong. Only configured tiers are listed (concrete ids are
+ * intentionally hidden so the planner stays in tier-space); an empty map yields
+ * "", and the planner falls back to the team default model.
+ */
+export function formatModelTiers(categories?: ModelCategories): string {
+	const configured = categories ? MODEL_CATEGORIES.filter((tier) => typeof categories[tier] === "string") : [];
+	if (configured.length === 0) return "";
+	return (
+		"\n\nWhen you spawn an agent, set its model to one of these capability tiers — chosen by how hard the task is — " +
+		`rather than a concrete model id (the team resolves each tier to the right model for its provider): ${configured.join(", ")}.`
+	);
+}
+
 export const PLANNER_ROLE = "planner";
 
 /**
@@ -540,10 +644,11 @@ export class Planner {
 			teamTools.push(createMemoryReadTool(options.memory), createMemoryWriteTool(options.memory, { role: PLANNER_ROLE }));
 		}
 		const roster = formatRoster(options.availableRoles ?? []);
+		const tiers = formatModelTiers(options.roleDefaults?.modelCategories);
 		this.agent = new Agent({
 			initialState: {
 				systemPrompt:
-					(options.systemPrompt ?? DEFAULT_PLANNER_PROMPT) + roster + (options.dryRun ? DRY_RUN_ADDENDUM : ""),
+					(options.systemPrompt ?? DEFAULT_PLANNER_PROMPT) + roster + tiers + (options.dryRun ? DRY_RUN_ADDENDUM : ""),
 				model,
 				thinkingLevel: options.thinkingLevel ?? "off",
 				tools: [...teamTools, ...(options.tools ?? [])],

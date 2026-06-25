@@ -96,6 +96,30 @@ describe("validateConfig", () => {
 			/role "x" has no "model"/,
 		);
 	});
+
+	test("resolves a static role's model tier through modelCategories", () => {
+		const config = validateConfig(
+			{ team: [{ role: "coder", systemPrompt: "code", model: "capable", provider: "github-copilot" }] },
+			"test",
+			{ capable: "claude-opus-4.8" },
+		);
+		expect(config.team[0]).toMatchObject({ model: "claude-opus-4.8", provider: "github-copilot" });
+	});
+
+	test("an unconfigured static-role tier falls back to defaults.model", () => {
+		const config = validateConfig(
+			{ defaults: { model: "claude-sonnet-4.5", provider: "github-copilot" }, team: [{ role: "coder", systemPrompt: "code", model: "capable" }] },
+			"test",
+			{ fast: "claude-haiku-4.5" },
+		);
+		expect(config.team[0]).toMatchObject({ model: "claude-sonnet-4.5", provider: "github-copilot" });
+	});
+
+	test("rejects an unconfigured static-role tier with no defaults.model", () => {
+		expect(() =>
+			validateConfig({ team: [{ role: "coder", systemPrompt: "code", model: "capable" }] }, "test", {}),
+		).toThrow(/uses model tier "capable", which is not configured/);
+	});
 });
 
 describe("startServer", () => {
@@ -417,6 +441,45 @@ describe("POST /runs end to end", () => {
 			expect(trace.tasks[0]).toMatchObject({ taskId: "draft", role: "poet" });
 			const poet = seen.find((cfg) => cfg.role === "poet");
 			expect(poet?.provider).toBe("github-copilot");
+		} finally {
+			await running.stop();
+		}
+	});
+
+	test("a per-run role with a guessed model but no provider takes the default model, not the guess", async () => {
+		// The planner often guesses a model id in anthropic's dash spelling while
+		// omitting the provider. Pinning that id onto the inherited github-copilot
+		// provider (which spells it with a dot) would miss getModel() and die on
+		// dispatch, so provider and model are inherited together as a pair.
+		const seen: RoleConfig[] = [];
+		const capturingResolve = (cfg: RoleConfig) => {
+			seen.push(cfg);
+			return fakeModel;
+		};
+		const plainStreamFn: StreamFn = (() => {
+			const stream = new MockAssistantStream() as unknown as AssistantMessageEventStream;
+			queueMicrotask(() => (stream as any).push({ type: "done", reason: "stop", message: assistantReply("a fine haiku") }));
+			return stream;
+		}) as StreamFn;
+		const running = startServer(
+			{ ...config, defaults: { provider: "github-copilot", model: "fake-model" } },
+			{ port: 0, logRuns: false, sessionsRoot, memoryRoot, allowAutonomous: true, teamOptions: { ...teamOptions, resolveModel: capturingResolve, streamFn: plainStreamFn } },
+		);
+		const base = `http://localhost:${running.port}`;
+		try {
+			const started = await fetch(`${base}/runs`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					roles: [{ role: "poet", systemPrompt: "you write haikus", model: "claude-sonnet-4-5" }],
+					tasks: [{ id: "draft", role: "poet", prompt: "write the haiku" }],
+				}),
+			});
+			expect(started.status).toBe(202);
+			await pollTraceSettled(base);
+			const poet = seen.find((cfg) => cfg.role === "poet");
+			expect(poet?.provider).toBe("github-copilot");
+			expect(poet?.model).toBe("fake-model");
 		} finally {
 			await running.stop();
 		}

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { TeamChannel } from "../src/channel.js";
-import { formatRoster, Planner } from "../src/planner.js";
+import { formatModelTiers, formatRoster, Planner } from "../src/planner.js";
 import { Team } from "../src/team.js";
 import type { RoleConfig } from "../src/types.js";
 
@@ -66,5 +66,120 @@ describe("Planner roleDefaults (R2-1)", () => {
 		const planned = planner.planBuffer!.roles.find((role) => role.role === "coder")!;
 		expect(planned.provider).toBe("openai");
 		expect(planned.model).toBe("gpt-5");
+	});
+
+	test("a guessed model with no provider is replaced by the default, not pinned to the inherited provider", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			// github-copilot spells the model with a dot ("claude-sonnet-4.5").
+			roleDefaults: { provider: "github-copilot", model: "claude-sonnet-4.5" },
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		// The planner guesses the anthropic dash spelling and omits the provider.
+		// Keeping that id against the inherited github-copilot provider would make
+		// getModel() miss on dispatch, so both must come from the team default.
+		const result = await spawnTool.execute("call-1", { role: "coder", systemPrompt: "write code", model: "claude-sonnet-4-5", taskId: "t1" } as any);
+		const planned = planner.planBuffer!.roles.find((role) => role.role === "coder")!;
+		expect(planned.provider).toBe("github-copilot");
+		expect(planned.model).toBe("claude-sonnet-4.5");
+		// The tool reports the resolved model, not the planner's raw guess.
+		expect(result.details?.model).toBe("claude-sonnet-4.5");
+	});
+
+	test("a model that resolves for no provider is rejected at plan time so the planner re-plans", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			// Explicit provider, so the guessed id is trusted as-is — and it does
+			// not exist for github-copilot, which would otherwise die on dispatch.
+			roleDefaults: { provider: "github-copilot", model: "claude-sonnet-4.5" },
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		await expect(
+			spawnTool.execute("call-1", {
+				role: "coder",
+				systemPrompt: "write code",
+				model: "claude-sonnet-4-5",
+				provider: "github-copilot",
+				taskId: "t1",
+			} as any),
+		).rejects.toThrow(/Unknown model "claude-sonnet-4-5" for provider "github-copilot"/);
+		// Nothing was recorded into the plan; the planner can retry with a valid id.
+		expect(planner.planBuffer!.roles.find((role) => role.role === "coder")).toBeUndefined();
+	});
+});
+
+describe("formatModelTiers", () => {
+	test("lists only the configured tiers and hides concrete ids", () => {
+		const out = formatModelTiers({ fast: "claude-haiku-4.5", capable: "claude-opus-4.8" });
+		expect(out).toContain("fast, capable");
+		expect(out).not.toContain("standard");
+		// concrete ids are intentionally not shown — the planner stays in tier-space
+		expect(out).not.toContain("claude-opus-4.8");
+	});
+
+	test("is empty when no tiers are configured", () => {
+		expect(formatModelTiers({})).toBe("");
+		expect(formatModelTiers(undefined)).toBe("");
+	});
+
+	test("the planner prompt advertises the team's configured tiers", () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			roleDefaults: { provider: "github-copilot", model: "claude-sonnet-4.5", modelCategories: { capable: "claude-opus-4.8" } },
+		});
+		expect(planner.agent.state.systemPrompt as string).toContain("capability tiers");
+		expect(planner.agent.state.systemPrompt as string).toContain("capable");
+	});
+});
+
+describe("Planner model tiers (fast/standard/capable)", () => {
+	test("a tier resolves to the team's configured model for that tier, paired with the default provider", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			roleDefaults: {
+				provider: "github-copilot",
+				model: "claude-sonnet-4.5",
+				// The tier maps to the provider-correct (dotted) id; the planner never
+				// has to author that spelling.
+				modelCategories: { capable: "claude-opus-4.8" },
+			},
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		const result = await spawnTool.execute("call-1", { role: "coder", systemPrompt: "write code", model: "capable", taskId: "t1" } as any);
+		const planned = planner.planBuffer!.roles.find((role) => role.role === "coder")!;
+		expect(planned.provider).toBe("github-copilot");
+		expect(planned.model).toBe("claude-opus-4.8");
+		expect(result.details?.model).toBe("claude-opus-4.8");
+	});
+
+	test("an unconfigured tier falls back to the team default model (no-op)", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			// "capable" is not configured, so it falls back to the default model.
+			roleDefaults: { provider: "github-copilot", model: "claude-sonnet-4.5", modelCategories: { fast: "claude-haiku-4.5" } },
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		await spawnTool.execute("call-1", { role: "coder", systemPrompt: "write code", model: "capable", taskId: "t1" } as any);
+		const planned = planner.planBuffer!.roles.find((role) => role.role === "coder")!;
+		expect(planned.provider).toBe("github-copilot");
+		expect(planned.model).toBe("claude-sonnet-4.5");
+	});
+
+	test("an unconfigured tier with no team default model is rejected with a tier-specific message", async () => {
+		const planner = new Planner({
+			team: new Team(new TeamChannel()),
+			dryRun: true,
+			roleDefaults: { provider: "github-copilot" },
+		});
+		const spawnTool = planner.agent.state.tools.find((tool) => tool.name === "spawn_agent")!;
+		await expect(
+			spawnTool.execute("call-1", { role: "coder", systemPrompt: "write code", model: "capable", taskId: "t1" } as any),
+		).rejects.toThrow(/Model tier "capable" is not configured/);
+		expect(planner.planBuffer!.roles.find((role) => role.role === "coder")).toBeUndefined();
 	});
 });
